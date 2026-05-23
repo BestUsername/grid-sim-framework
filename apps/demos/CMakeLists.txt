@@ -1,0 +1,32 @@
+add_executable(demo_libevent demo_libevent_main.cpp)
+target_compile_features(demo_libevent PRIVATE cxx_std_20)
+target_link_libraries(demo_libevent PRIVATE event)
+
+function(add_demo_executable target_name)
+    add_executable(${target_name} ${ARGN})
+    target_compile_features(${target_name} PRIVATE cxx_std_20)
+endfunction()
+
+set(CURSES_NEED_WIDE TRUE)
+set(CURSES_NEED_NCURSES TRUE)
+find_package(Curses)
+if (CURSES_FOUND)
+    add_demo_executable(demo_io_keyboard_ncurses demo_io_keyboard_ncurses.cpp)
+    target_include_directories(demo_io_keyboard_ncurses PRIVATE ${CURSES_INCLUDE_DIRS})
+    target_link_libraries(demo_io_keyboard_ncurses PRIVATE ${CURSES_LIBRARIES} io)
+
+    add_demo_executable(demo_io_keyboard_console demo_io_keyboard_console.cpp)
+    target_include_directories(demo_io_keyboard_console PRIVATE ${CURSES_INCLUDE_DIRS})
+    target_link_libraries(demo_io_keyboard_console PRIVATE ${CURSES_LIBRARIES} io)
+endif()
+
+find_package(SDL2)
+if (SDL2_FOUND)
+    add_demo_executable(demo_io_keyboard_sdl demo_io_keyboard_sdl.cpp)
+    target_include_directories(demo_io_keyboard_sdl PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(demo_io_keyboard_sdl PRIVATE ${SDL2_LIBRARIES} io)
+
+    add_demo_executable(demo_io_all_inputs demo_io_all_inputs.cpp)
+    target_include_directories(demo_io_all_inputs PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(demo_io_all_inputs PRIVATE ${SDL2_LIBRARIES} io)
+endif()

@@ -1,0 +1,25 @@
+function(add_sim_library)
+    if(BUILD_TESTING)
+        include(${CMAKE_SOURCE_DIR}/cmake/Coverage.cmake)
+        initialize_coverage()
+    endif()
+
+    # Set coverage thresholds (can be customized)
+    set(LIBSIM_LINE_COVERAGE_THRESHOLD 80 CACHE STRING "Minimum line coverage percentage for libsim")
+    set(LIBSIM_FUNCTION_COVERAGE_THRESHOLD 80 CACHE STRING "Minimum function coverage percentage for libsim")
+
+    file(GLOB SOURCES "src/*.cpp")
+    add_library(sim ${SOURCES})
+    target_include_directories(sim PUBLIC include)
+    target_link_libraries(sim PUBLIC event)
+    
+    if(BUILD_TESTING) 
+        add_subdirectory(tests)
+        add_directory_to_coverage(${CMAKE_CURRENT_SOURCE_DIR} ${LIBSIM_LINE_COVERAGE_THRESHOLD} ${LIBSIM_FUNCTION_COVERAGE_THRESHOLD})
+        if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+            finalize_coverage()
+        endif()
+    endif()
+
+endfunction()
+add_sim_library()

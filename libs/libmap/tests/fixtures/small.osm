@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Small synthetic OSM fixture for libmap unit tests.
+  Bounding box: lat 51.5000–51.5045, lon -0.1010– -0.0955  (~500 m × ~385 m)
+  Origin (NW corner): lat=51.5045, lon=-0.1010
+
+  Features:
+    way 100  – primary road   (W→E, lat≈51.5020)
+    way 200  – water polygon  (NW quadrant, closed)
+    way 300  – building       (SE quadrant, closed)
+    way 400  – forest         (central, landuse=forest, closed)
+    way 500  – motorway       (N→S, lon≈-0.0985)
+-->
+<osm version="0.6">
+
+  <!-- ── Nodes ── -->
+
+  <!-- Road nodes (primary, W→E at lat 51.5020) -->
+  <node id="1"  lat="51.5020" lon="-0.1010"/>
+  <node id="2"  lat="51.5020" lon="-0.0983"/>
+  <node id="3"  lat="51.5020" lon="-0.0955"/>
+
+  <!-- Water polygon nodes (NW quadrant) -->
+  <node id="10" lat="51.5045" lon="-0.1010"/>
+  <node id="11" lat="51.5045" lon="-0.0990"/>
+  <node id="12" lat="51.5035" lon="-0.0985"/>
+  <node id="13" lat="51.5030" lon="-0.1005"/>
+
+  <!-- Building nodes (SE quadrant) -->
+  <node id="20" lat="51.5005" lon="-0.0975"/>
+  <node id="21" lat="51.5005" lon="-0.0960"/>
+  <node id="22" lat="51.5012" lon="-0.0960"/>
+  <node id="23" lat="51.5012" lon="-0.0975"/>
+
+  <!-- Forest nodes (central, landuse=forest) -->
+  <node id="30" lat="51.5030" lon="-0.0990"/>
+  <node id="31" lat="51.5030" lon="-0.0975"/>
+  <node id="32" lat="51.5025" lon="-0.0975"/>
+  <node id="33" lat="51.5025" lon="-0.0990"/>
+
+  <!-- Motorway nodes (N→S at lon -0.0985) -->
+  <node id="40" lat="51.5040" lon="-0.0985"/>
+  <node id="41" lat="51.5010" lon="-0.0985"/>
+
+  <!-- ── Ways ── -->
+
+  <!-- Primary road W→E -->
+  <way id="100">
+    <nd ref="1"/>
+    <nd ref="2"/>
+    <nd ref="3"/>
+    <tag k="highway" v="primary"/>
+    <tag k="name"    v="Test Road"/>
+  </way>
+
+  <!-- Water polygon (closed: first == last) -->
+  <way id="200">
+    <nd ref="10"/>
+    <nd ref="11"/>
+    <nd ref="12"/>
+    <nd ref="13"/>
+    <nd ref="10"/>
+    <tag k="natural" v="water"/>
+    <tag k="name"    v="Test Lake"/>
+  </way>
+
+  <!-- Building (closed) -->
+  <way id="300">
+    <nd ref="20"/>
+    <nd ref="21"/>
+    <nd ref="22"/>
+    <nd ref="23"/>
+    <nd ref="20"/>
+    <tag k="building" v="yes"/>
+    <tag k="name"     v="Test Building"/>
+  </way>
+
+  <!-- Forest (landuse=forest, closed) -->
+  <way id="400">
+    <nd ref="30"/>
+    <nd ref="31"/>
+    <nd ref="32"/>
+    <nd ref="33"/>
+    <nd ref="30"/>
+    <tag k="landuse" v="forest"/>
+  </way>
+
+  <!-- Motorway N→S -->
+  <way id="500">
+    <nd ref="40"/>
+    <nd ref="41"/>
+    <tag k="highway" v="motorway"/>
+  </way>
+
+</osm>
