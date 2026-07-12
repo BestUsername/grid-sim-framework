@@ -3,6 +3,7 @@
 
 #include "libphysics/collision_event.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace battlegrid {
@@ -19,7 +20,6 @@ Vehicle::Vehicle(I_ENVIRONMENT& env,
     : BASE_AGENT(env, location, name)
     , m_faction(faction)
     , m_vehicleType(vehicleType)
-    , m_map(map)
     , m_speed(speed)
 {
 }
@@ -36,23 +36,17 @@ void Vehicle::update(grid::libsim::DeltaType delta)
     if (m_remoteOwned) return;
 
     if (isDead()) {
-        // Eject driver on death
-        if (m_driver) dismount();
-        applyGravity(delta.count());
+        // The world keeps a mounted driver attached until it transfers the
+        // driver back to an independent collision body.
+        m_movementVelocity = {0.0, 0.0};
         return;
     }
 
-    // If a driver soldier is riding, keep them anchored to the vehicle
+    // Submit intention only. BattleGridWorld applies Box3D's solved
+    // transform to this vehicle and any mounted driver.
     double dt = delta.count();
     if (m_hasTarget) {
         moveTowardTarget(dt);
-    }
-    applyGravity(dt);
-
-    // Anchor driver *after* movement so they stay in sync.
-    if (m_driver) {
-        m_driver->set_location(m_location);
-        m_driver->setYaw(m_yaw);
     }
 }
 
@@ -94,13 +88,13 @@ void Vehicle::setMoveTarget(const COORD& target)
 void Vehicle::clearMoveTarget()
 {
     m_hasTarget = false;
+    m_movementVelocity = {0.0, 0.0};
 }
 
 bool Vehicle::mount(Soldier* s)
 {
     if (m_driver || !s) return false;
     m_driver = s;
-    m_driver->set_location(m_location);
     m_driver->setYaw(m_yaw);
     communicate(grid::libsim::Senses::Hearing,
                 s->name() + " boards " + m_name + ".");
@@ -124,72 +118,15 @@ void Vehicle::moveTowardTarget(double dt)
     double dist = std::sqrt(dx * dx + dz * dz);
 
     if (dist < 0.5) {
-        m_hasTarget = false;
+        clearMoveTarget();
         return;
     }
-
-    // Check terrain traversal
-    auto ix = static_cast<size_t>(std::max(0.0, m_location[0]));
-    auto iz = static_cast<size_t>(std::max(0.0, m_location[2]));
-    TerrainType terrain = m_map.at(ix, iz);
-
-    double groundH = m_map.heightAt(m_location[0], m_location[2]);
-    bool grounded = m_body.isGrounded(m_location[1], groundH);
-    double speedFactor = grounded ? terrainSpeedFactor(terrain) : 1.0;
-
-    if (grounded && !canTraverse(terrain)) {
-        m_hasTarget = false;
-        return;
-    }
-
-    double effectiveSpeed = m_speed * speedFactor;
-    double step = effectiveSpeed * dt;
-    if (step > dist) step = dist;
 
     double nx = dx / dist;
     double nz = dz / dist;
-
-    double newX = m_location[0] + nx * step;
-    double newZ = m_location[2] + nz * step;
-
-    // Slope / obstacle check: sample the whole footprint, not just the centre.
-    auto sample = m_map.maxTerrainInRadius(newX, newZ, kCollisionRadius);
-    double heightDelta = sample.height - m_location[1];
-
-    auto result = resolveTerrainCollision(
-            heightDelta, kMaxStepUp, effectiveSpeed, kMass,
-            terrainObstacleStrength(sample.type));
-
-    switch (result.outcome) {
-    case TerrainCollisionOutcome::Pass:
-        break;
-    case TerrainCollisionOutcome::SpeedBump:
-        takeDamage(result.damage);
-        step *= result.speedMultiplier;
-        newX = m_location[0] + nx * step;
-        newZ = m_location[2] + nz * step;
-        break;
-    case TerrainCollisionOutcome::CrashThrough:
-        takeDamage(result.damage);
-        step *= result.speedMultiplier;
-        newX = m_location[0] + nx * step;
-        newZ = m_location[2] + nz * step;
-        break;
-    case TerrainCollisionOutcome::HardStop:
-        takeDamage(result.damage);
-        m_hasTarget = false;
-        return;
-    }
-
-    m_location[0] = newX;
-    m_location[2] = newZ;
+    double effectiveSpeed = std::min(m_speed, dist / std::max(dt, 1e-12));
+    m_movementVelocity = {nx * effectiveSpeed, nz * effectiveSpeed};
     m_yaw = std::atan2(nz, nx);
-}
-
-void Vehicle::applyGravity(double dt)
-{
-    double groundH = m_map.heightAt(m_location[0], m_location[2]);
-    m_location[1] = m_body.applyGravity(dt, m_location[1], groundH, kGravity);
 }
 
 // ── LandVehicle ─────────────────────────────────────────────────────
@@ -216,17 +153,22 @@ AirVehicle::AirVehicle(I_ENVIRONMENT& env, const COORD& location,
                        const std::string& name, Faction faction,
                        const TerrainMap& map, double speed,
                        double altitude)
-    : Vehicle(env, location, name, faction, EntityType::AirVehicle, map, speed)
-    , m_altitude(altitude)
+    : Vehicle(env, COORD{location[0], location[1] + altitude, location[2]},
+              name, faction, EntityType::AirVehicle, map, speed)
+    , m_cruiseHeight(location[1] + altitude)
 {
 }
 
 void AirVehicle::update(grid::libsim::DeltaType delta)
 {
     Vehicle::update(delta);
+}
 
-    // Air vehicles fly at a fixed altitude above terrain
-    m_location[1] = m_map.heightAt(m_location[0], m_location[2]) + m_altitude;
+grid::physics::Vec3 AirVehicle::movementVelocity() const
+{
+    auto velocity = Vehicle::movementVelocity();
+    velocity[1] = std::clamp((m_cruiseHeight - m_location[1]) * 4.0, -m_speed, m_speed);
+    return velocity;
 }
 
 } // namespace battlegrid

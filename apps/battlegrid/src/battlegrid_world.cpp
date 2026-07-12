@@ -53,6 +53,7 @@ BattleGridWorld::BattleGridWorld()
     : m_engine(60)
 {
     m_engine.getGameLog().setLogFile("battlegrid.log");
+    m_physicsWorld.setGravity({0.0, -20.0, 0.0});
 }
 
 bool BattleGridWorld::loadMap(const std::string& mapPath)
@@ -177,18 +178,21 @@ void BattleGridWorld::populate(InputMap& inputMap)
     for (auto& v : m_seaVehicles)
         registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius);
     for (auto& v : m_airVehicles)
-        registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius);
+        registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
+                              v->gravityScale());
 }
 
 void BattleGridWorld::registerCollisionBody(const std::string& name, const COORD& pos,
-                                            double mass, double radius)
+                                            double mass, double radius, double gravityScale)
 {
     grid::physics::CollisionBody body;
     body.name = name;
-    body.position = {pos[0], pos[1], pos[2]};
+    body.position = {pos[0], pos[1] + (gravityScale > 0.0 ? radius : 0.0), pos[2]};
     body.prevPosition = body.position;
     body.mass = mass;
     body.radius = radius;
+    body.motion = grid::physics::BodyMotion::Dynamic;
+    body.gravityScale = gravityScale;
     m_physicsWorld.addBody(body);
 }
 
@@ -249,50 +253,118 @@ Vehicle* BattleGridWorld::findNearestVehicle(const COORD& pos, double range,
     return best;
 }
 
-void BattleGridWorld::stepCollisions(double dt,
-                                     const std::unordered_map<std::string, COORD>& positions)
+bool BattleGridWorld::mountSoldier(Soldier& soldier, Vehicle& vehicle)
 {
-    // Sync entity positions into the physics world.
-    for (const auto& [name, pos] : positions) {
-        m_physicsWorld.updateBodyPosition(name, pos[0], pos[1], pos[2]);
+    if (!vehicle.mount(&soldier)) {
+        return false;
+    }
+    m_physicsWorld.removeBody(soldier.name());
+    return true;
+}
+
+void BattleGridWorld::dismountSoldier(Soldier& soldier, Vehicle& vehicle)
+{
+    const auto vehiclePosition = m_physicsWorld.simulatedBodyPosition(vehicle.name());
+    vehicle.dismount();
+    if (!vehiclePosition) {
+        return;
     }
 
-    // Run fixed-timestep collision detection + impulse resolution.
-    auto collisions = m_physicsWorld.step(dt);
+    COORD position{(*vehiclePosition)[0] + Vehicle::kCollisionRadius
+                       + Soldier::kCollisionRadius + 0.1,
+                   (*vehiclePosition)[1],
+                   (*vehiclePosition)[2]};
+    registerCollisionBody(soldier.name(), position, Soldier::kMass,
+                          Soldier::kCollisionRadius);
+}
 
-    // Apply positional separation and dispatch collision events.
+void BattleGridWorld::submitActorVelocities()
+{
+    constexpr double jumpSpeed = 8.0;
+    auto submit = [&](const auto& actor) {
+        const auto current = m_physicsWorld.simulatedBodyVelocity(actor->name());
+        auto desired = actor->movementVelocity();
+        desired[1] = current ? (*current)[1] : 0.0;
+        m_physicsWorld.setSimulatedBodyVelocity(actor->name(), desired);
+    };
+
+    for (const auto& soldier : m_soldiers) {
+        submit(soldier);
+        if (soldier->consumeJumpRequest()
+            && m_physicsWorld.simulatedBodyTouchesStatic(soldier->name())) {
+            const auto horizontal = soldier->movementVelocity();
+            m_physicsWorld.setSimulatedBodyVelocity(
+                soldier->name(), {horizontal[0], jumpSpeed, horizontal[2]});
+        }
+    }
+    for (const auto& civilian : m_civilians) {
+        submit(civilian);
+        if (civilian->consumeJumpRequest()
+            && m_physicsWorld.simulatedBodyTouchesStatic(civilian->name())) {
+            const auto horizontal = civilian->movementVelocity();
+            m_physicsWorld.setSimulatedBodyVelocity(
+                civilian->name(), {horizontal[0], jumpSpeed, horizontal[2]});
+        }
+    }
+    for (const auto& vehicle : m_landVehicles) submit(vehicle);
+    for (const auto& vehicle : m_seaVehicles) submit(vehicle);
+    for (const auto& vehicle : m_airVehicles) {
+        auto desired = vehicle->movementVelocity();
+        m_physicsWorld.setSimulatedBodyVelocity(vehicle->name(), desired);
+    }
+}
+
+void BattleGridWorld::applySolvedTransforms(
+    std::unordered_map<std::string, COORD>& positions)
+{
+    auto apply = [&](const auto& actor) {
+        const auto position = m_physicsWorld.simulatedBodyPosition(actor->name());
+        if (!position) {
+            return;
+        }
+        const COORD solved{(*position)[0], (*position)[1], (*position)[2]};
+        actor->set_location(solved);
+        positions[actor->name()] = solved;
+    };
+
+    for (const auto& soldier : m_soldiers) apply(soldier);
+    for (const auto& civilian : m_civilians) apply(civilian);
+    for (const auto& vehicle : m_landVehicles) apply(vehicle);
+    for (const auto& vehicle : m_seaVehicles) apply(vehicle);
+    for (const auto& vehicle : m_airVehicles) apply(vehicle);
+
+    for (const auto& vehicle : m_landVehicles) {
+        if (auto* driver = vehicle->driver()) {
+            driver->set_location(vehicle->location());
+            driver->setYaw(vehicle->yaw());
+            positions[driver->name()] = driver->location();
+        }
+    }
+    for (const auto& vehicle : m_seaVehicles) {
+        if (auto* driver = vehicle->driver()) {
+            driver->set_location(vehicle->location());
+            driver->setYaw(vehicle->yaw());
+            positions[driver->name()] = driver->location();
+        }
+    }
+    for (const auto& vehicle : m_airVehicles) {
+        if (auto* driver = vehicle->driver()) {
+            driver->set_location(vehicle->location());
+            driver->setYaw(vehicle->yaw());
+            positions[driver->name()] = driver->location();
+        }
+    }
+}
+
+void BattleGridWorld::stepCollisions(double dt,
+                                     std::unordered_map<std::string, COORD>& positions)
+{
+    submitActorVelocities();
+    const auto collisions = m_physicsWorld.step(dt);
+    applySolvedTransforms(positions);
+
     auto agents = m_engine.getAllAgents();
     for (const auto& col : collisions) {
-        // Push overlapping entities apart by the penetration depth,
-        // weighted by inverse mass so lighter entities move more.
-        double totalMass = col.massA + col.massB;
-        if (totalMass > 1e-12) {
-            double ratioA = col.massB / totalMass;
-            double ratioB = col.massA / totalMass;
-
-            if (col.massA > col.massB * 10.0) {
-                ratioA = 0.0;
-                ratioB = 1.0;
-            } else if (col.massB > col.massA * 10.0) {
-                ratioA = 1.0;
-                ratioB = 0.0;
-            }
-            for (auto& agent : agents) {
-                if (agent->name() == col.nameA) {
-                    auto loc = agent->location();
-                    loc[0] -= col.normal[0] * col.penetration * ratioA;
-                    loc[2] -= col.normal[2] * col.penetration * ratioA;
-                    agent->set_location(loc);
-                }
-                if (agent->name() == col.nameB) {
-                    auto loc = agent->location();
-                    loc[0] += col.normal[0] * col.penetration * ratioB;
-                    loc[2] += col.normal[2] * col.penetration * ratioB;
-                    agent->set_location(loc);
-                }
-            }
-        }
-
         // Event for entity A (normal points toward B).
         grid::physics::CollisionEvent evtA(
             col.nameA, col.nameB, col.normal, col.relativeVelocity,

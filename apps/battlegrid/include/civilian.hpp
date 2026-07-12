@@ -5,7 +5,7 @@
 #include "entity_types.hpp"
 #include "terrain.hpp"
 
-#include "libphysics/kinematic_body.hpp"
+#include "libphysics/collision_body.hpp"
 #include "libsim/base_agent.hpp"
 
 namespace battlegrid {
@@ -37,9 +37,14 @@ public:
     void setRemoteOwned(bool r) { m_remoteOwned = r; }
     bool isRemoteOwned() const { return m_remoteOwned; }
 
-    /// Jump (sets vertical velocity if grounded).
+    /// Request a physics-world jump on the next simulation step.
     void jump();
-    bool isGrounded() const;
+    bool consumeJumpRequest();
+
+    grid::physics::Vec3 movementVelocity() const
+    {
+        return {m_movementVelocity[0], 0.0, m_movementVelocity[1]};
+    }
 
     double health() const { return m_health; }
     double maxHealth() const { return kMaxHealth; }
@@ -54,7 +59,6 @@ public:
 private:
     void pickNewWanderTarget();
     void moveTowardTarget(double dt);
-    void applyGravity(double dt);
 
     const TerrainMap& m_map;
     double            m_speed;
@@ -66,11 +70,10 @@ private:
     bool              m_remoteOwned = false;
     bool              m_fleeing = false;
     double            m_health = kMaxHealth;
-    grid::physics::KinematicBody m_body;
+    std::array<double, 2> m_movementVelocity{0.0, 0.0};
+    bool m_jumpRequested = false;
 
-    static constexpr double kGravity         = 20.0;
-    static constexpr double kJumpSpeed       =  8.0;
-    static constexpr double kMaxStepUp       =  1.2;
+    static constexpr double kJumpSpeed = 8.0;
 };
 
 } // namespace battlegrid

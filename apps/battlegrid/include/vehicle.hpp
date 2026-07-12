@@ -5,64 +5,12 @@
 #include "entity_types.hpp"
 #include "terrain.hpp"
 
-#include "libphysics/kinematic_body.hpp"
+#include "libphysics/collision_body.hpp"
 #include "libsim/base_agent.hpp"
 
 namespace battlegrid {
 
 class Soldier; // forward
-
-// ── Terrain collision outcomes ──────────────────────────────────────
-
-/// What happens when a vehicle hits a terrain height step.
-enum class TerrainCollisionOutcome {
-    Pass,          ///< Within normal step-up — proceed unimpeded.
-    SpeedBump,     ///< Small bump — vehicle passes, takes speed-based damage.
-    CrashThrough,  ///< Enough momentum to break through — passes with damage.
-    HardStop,      ///< Cannot break through — full stop + impact damage.
-};
-
-/// Result of evaluating a terrain collision.
-struct TerrainCollisionResult {
-    TerrainCollisionOutcome outcome = TerrainCollisionOutcome::Pass;
-    double damage          = 0.0;  ///< Damage dealt to the vehicle.
-    double speedMultiplier = 1.0;  ///< Applied to movement (0 = stop, 1 = full).
-};
-
-/// Evaluate what happens when a vehicle encounters a terrain height step.
-/// @param heightDelta       targetGroundH − currentFootY (positive = uphill).
-/// @param maxStepUp         vehicle's normal step-up tolerance.
-/// @param vehicleSpeed      current effective speed.
-/// @param vehicleMass       mass of the vehicle.
-/// @param obstacleStrength  terrain's resistance (terrainObstacleStrength).
-inline TerrainCollisionResult resolveTerrainCollision(
-        double heightDelta, double maxStepUp,
-        double vehicleSpeed, double vehicleMass,
-        double obstacleStrength)
-{
-    // Downhill or within normal step-up — no collision.
-    if (heightDelta <= maxStepUp)
-        return {TerrainCollisionOutcome::Pass, 0.0, 1.0};
-
-    double excess = heightDelta - maxStepUp;
-
-    // Small bump: excess within half the step-up tolerance.
-    if (excess <= maxStepUp * 0.5) {
-        double damage = vehicleSpeed * excess * 0.5;
-        return {TerrainCollisionOutcome::SpeedBump, damage, 0.7};
-    }
-
-    // Larger obstacle — compare momentum against terrain strength.
-    double momentum = vehicleSpeed * vehicleMass;
-    if (obstacleStrength > 0.0 && momentum > obstacleStrength) {
-        double damage = obstacleStrength / vehicleMass;
-        return {TerrainCollisionOutcome::CrashThrough, damage, 0.3};
-    }
-
-    // Can't break through — hard stop.
-    double damage = vehicleSpeed * 2.0;
-    return {TerrainCollisionOutcome::HardStop, damage, 0.0};
-}
 
 /**
  * @brief Base class for all vehicles in the simulation.
@@ -90,6 +38,11 @@ public:
     void setMoveTarget(const COORD& target);
     void clearMoveTarget();
     bool hasMoveTarget() const { return m_hasTarget; }
+    virtual grid::physics::Vec3 movementVelocity() const
+    {
+        return {m_movementVelocity[0], 0.0, m_movementVelocity[1]};
+    }
+    virtual double gravityScale() const { return 1.0; }
 
     /// Disable local autonomous updates when the actor is driven externally.
     void setRemoteOwned(bool r) { m_remoteOwned = r; }
@@ -114,13 +67,10 @@ public:
     static constexpr double kMaxStepUp       = 2.0;
 
 protected:
-    virtual bool canTraverse(TerrainType t) const = 0;
     void moveTowardTarget(double dt);
-    void applyGravity(double dt);
 
     Faction           m_faction;
     EntityType        m_vehicleType;
-    const TerrainMap& m_map;
     double            m_speed;
     bool              m_hasTarget = false;
     COORD             m_target{0.0, 0.0, 0.0};
@@ -128,9 +78,7 @@ protected:
     bool              m_remoteOwned = false;
     Soldier*          m_driver = nullptr;
     double            m_health = kMaxHealth;
-    grid::physics::KinematicBody m_body;
-
-    static constexpr double kGravity         = 20.0;
+    std::array<double, 2> m_movementVelocity{0.0, 0.0};
 };
 
 // ── Concrete vehicle types ──────────────────────────────────────────
@@ -141,8 +89,6 @@ public:
                 const std::string& name, Faction faction,
                 const TerrainMap& map, double speed = 10.0);
 
-protected:
-    bool canTraverse(TerrainType t) const override { return isTraversableByLand(t); }
 };
 
 class SeaVehicle : public Vehicle {
@@ -151,8 +97,6 @@ public:
                const std::string& name, Faction faction,
                const TerrainMap& map, double speed = 12.0);
 
-protected:
-    bool canTraverse(TerrainType t) const override { return isTraversableBySea(t); }
 };
 
 class AirVehicle : public Vehicle {
@@ -163,12 +107,12 @@ public:
                double altitude = 15.0);
 
     void update(grid::libsim::DeltaType delta) override;
+    grid::physics::Vec3 movementVelocity() const override;
+    double gravityScale() const override { return 0.0; }
 
 protected:
-    bool canTraverse(TerrainType /*t*/) const override { return true; }
-
 private:
-    double m_altitude;
+    double m_cruiseHeight;
 };
 
 } // namespace battlegrid

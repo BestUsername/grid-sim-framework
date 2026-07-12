@@ -19,8 +19,8 @@ enum class BodyMotion {
  *
  * Registered with PhysicsWorld so that it can detect overlaps,
  * compute impulses, and report collisions.  The owning game code
- * is responsible for calling PhysicsWorld::updateBody() each frame
- * to keep position in sync with the simulation.
+ * is responsible for setting its intended velocity. Dynamic bodies have
+ * their transforms advanced and resolved by PhysicsWorld.
  */
 struct CollisionBody {
     std::string name;      ///< Unique identifier (matches agent name).
@@ -29,6 +29,7 @@ struct CollisionBody {
     double mass   = 1.0;   ///< Mass in kg (0 = infinite / immovable).
     double radius = 0.5;   ///< Bounding-sphere radius (LOD 0).
     BodyMotion motion = BodyMotion::Kinematic;
+    double gravityScale = 0.0; ///< Multiplier for the world's gravity.
 };
 
 /**

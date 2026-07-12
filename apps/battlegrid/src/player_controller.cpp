@@ -81,64 +81,27 @@ void PlayerController::update(double dt, const PositionSnapshot& positions)
 
     if (m_vehicle) {
         if (hasMove) {
-            // Drive the vehicle
-            const COORD& vpos = m_vehicle->location();
-            double moveStep = m_vehicle->speed() * std::max(dt, 0.3);
-            COORD target{
-                vpos[0] + worldX * moveStep,
-                0.0,
-                vpos[2] + worldZ * moveStep
-            };
-            m_vehicle->setMoveTarget(target);
+            m_vehicle->setMoveTarget(COORD{
+                m_vehicle->location()[0] + worldX * m_vehicle->speed(),
+                m_vehicle->location()[1],
+                m_vehicle->location()[2] + worldZ * m_vehicle->speed()});
         } else {
             m_vehicle->clearMoveTarget();
         }
     } else {
-        // ── On foot: horizontal movement + vertical physics ─────────
-        const COORD& pos = m_soldier.location();
-        double newX = pos[0];
-        double newZ = pos[2];
-
-        double currentGroundH = m_map.heightAt(pos[0], pos[2]);
-        bool grounded = m_body.isGrounded(pos[1], currentGroundH);
-
         if (hasMove) {
             m_soldier.setSpeedMultiplier(speedMul);
-
-            // When airborne, use full speed (no terrain penalty)
-            double speedFactor = 1.0;
-            if (grounded) {
-                speedFactor = terrainSpeedFactor(m_map.at(
-                    static_cast<size_t>(std::max(0.0, pos[0])),
-                    static_cast<size_t>(std::max(0.0, pos[2]))));
-            }
-
-            double effectiveSpeed = m_soldier.speed() * speedMul * speedFactor;
-            double step = effectiveSpeed * dt;
-
-            double candidateX = newX + worldX * step;
-            double candidateZ = newZ + worldZ * step;
-
-            // Slope/wall check: sample the whole footprint, not just
-            // the centre (works both grounded and airborne).
-            double targetGroundH = m_map.maxHeightInRadius(
-                    candidateX, candidateZ, kCollisionRadius);
-            if (!grid::physics::KinematicBody::isTooSteep(
-                       pos[1], targetGroundH, kMaxStepUp)) {
-                newX = candidateX;
-                newZ = candidateZ;
-            }
+            m_soldier.setMovementVelocity(
+                worldX * m_soldier.speed() * speedMul,
+                worldZ * m_soldier.speed() * speedMul);
+        } else {
+            m_soldier.setMovementVelocity(0.0, 0.0);
         }
 
-        // Jump (only when grounded)
+        // Box3D verifies whether the jump can take effect during the
+        // authoritative physics step.
         if (m_input.pressed(GameAction::Jump))
-            m_body.tryJump(pos[1], currentGroundH, kJumpSpeed);
-
-        // Gravity
-        double newGroundH = m_map.heightAt(newX, newZ);
-        double newY = m_body.applyGravity(dt, pos[1], newGroundH, kGravity);
-
-        m_soldier.set_location(COORD{newX, newY, newZ});
+            m_soldier.jump();
     }
 }
 
@@ -179,28 +142,15 @@ COORD PlayerController::desiredCameraTarget() const
 void PlayerController::tryMountDismount(const PositionSnapshot& positions)
 {
     if (m_vehicle) {
-        // Dismount — re-register the soldier's collision body.
-        m_vehicle->dismount();
-        grid::physics::CollisionBody body;
-        body.name         = m_soldier.name();
-        body.position     = {m_soldier.location()[0],
-                             m_soldier.location()[1],
-                             m_soldier.location()[2]};
-        body.prevPosition = body.position;
-        body.mass         = Soldier::kMass;
-        body.radius       = Soldier::kCollisionRadius;
-        m_world.physicsWorld().addBody(body);
+        m_world.dismountSoldier(m_soldier, *m_vehicle);
         m_vehicle = nullptr;
         m_soldier.setSpeedMultiplier(1.0);
     } else {
         // Try to mount the nearest vehicle within 4 units
         Vehicle* v = m_world.findNearestVehicle(m_snapshotPos, 4.0, positions);
         if (v && !v->hasDriver()) {
-            if (v->mount(&m_soldier)) {
+            if (m_world.mountSoldier(m_soldier, *v)) {
                 m_vehicle = v;
-                // Remove the soldier's collision body so it doesn't
-                // collide with the vehicle it's riding.
-                m_world.physicsWorld().removeBody(m_soldier.name());
             }
         }
     }

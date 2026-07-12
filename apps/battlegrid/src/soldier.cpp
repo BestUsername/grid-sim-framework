@@ -4,6 +4,7 @@
 #include "libsim/sense_event.hpp"
 
 #include <cmath>
+#include <utility>
 
 namespace battlegrid {
 
@@ -34,7 +35,7 @@ void Soldier::update(grid::libsim::DeltaType delta)
     double dt = delta.count();
 
     if (isDead()) {
-        applyGravity(dt);
+        setMovementVelocity(0.0, 0.0);
         return;
     }
 
@@ -42,7 +43,6 @@ void Soldier::update(grid::libsim::DeltaType delta)
         if (m_hasTarget) {
             moveTowardTarget(dt);
         }
-        applyGravity(dt);
     }
 }
 
@@ -96,6 +96,7 @@ void Soldier::setMoveTarget(const COORD& target)
 void Soldier::clearMoveTarget()
 {
     m_hasTarget = false;
+    setMovementVelocity(0.0, 0.0);
 }
 
 void Soldier::moveTowardTarget(double dt)
@@ -107,42 +108,14 @@ void Soldier::moveTowardTarget(double dt)
     double dist = std::sqrt(dx * dx + dz * dz);
 
     if (dist < 0.1) {
-        m_hasTarget = false;
+        clearMoveTarget();
         return;
     }
-
-    // Terrain speed modifier (only when grounded)
-    auto ix = static_cast<size_t>(std::max(0.0, m_location[0]));
-    auto iz = static_cast<size_t>(std::max(0.0, m_location[2]));
-    TerrainType terrain = m_map.at(ix, iz);
-
-    double speedFactor = isGrounded() ? terrainSpeedFactor(terrain) : 1.0;
-
-    if (isGrounded() && !isTraversableByLand(terrain)) {
-        m_hasTarget = false;
-        return;
-    }
-
-    double effectiveSpeed = m_speed * m_speedMultiplier * speedFactor;
-    double step = effectiveSpeed * dt;
-    if (step > dist) step = dist;
 
     double nx = dx / dist;
     double nz = dz / dist;
-
-    double newX = m_location[0] + nx * step;
-    double newZ = m_location[2] + nz * step;
-
-    // Slope/wall check: sample the whole footprint, not just the centre
-    double targetGroundH = m_map.maxHeightInRadius(newX, newZ, kCollisionRadius);
-    if (grid::physics::KinematicBody::isTooSteep(m_location[1], targetGroundH,
-                                                  kMaxStepUp)) {
-        m_hasTarget = false;
-        return;
-    }
-
-    m_location[0] = newX;
-    m_location[2] = newZ;
+    double effectiveSpeed = std::min(m_speed * m_speedMultiplier, dist / std::max(dt, 1e-12));
+    setMovementVelocity(nx * effectiveSpeed, nz * effectiveSpeed);
 
     // Update facing
     m_yaw = std::atan2(nz, nx);
@@ -150,20 +123,12 @@ void Soldier::moveTowardTarget(double dt)
 
 void Soldier::jump()
 {
-    double groundH = m_map.heightAt(m_location[0], m_location[2]);
-    m_body.tryJump(m_location[1], groundH, kJumpSpeed);
+    m_jumpRequested = true;
 }
 
-bool Soldier::isGrounded() const
+bool Soldier::consumeJumpRequest()
 {
-    double terrainH = m_map.heightAt(m_location[0], m_location[2]);
-    return m_body.isGrounded(m_location[1], terrainH);
-}
-
-void Soldier::applyGravity(double dt)
-{
-    double groundH = m_map.heightAt(m_location[0], m_location[2]);
-    m_location[1] = m_body.applyGravity(dt, m_location[1], groundH, kGravity);
+    return std::exchange(m_jumpRequested, false);
 }
 
 } // namespace battlegrid

@@ -133,6 +133,31 @@ TEST(PhysicsWorldTest, DynamicBodyDoesNotPassThroughStaticBox)
     EXPECT_LT((*position)[0], 1.1);
 }
 
+TEST(PhysicsWorldTest, DynamicBodiesReportBox3DCollisionData)
+{
+    PhysicsWorld pw(1.0 / 60.0);
+    CollisionBody a;
+    a.name = "A";
+    a.position = {0.0, 0.0, 0.0};
+    a.radius = 0.5;
+    a.mass = 10.0;
+    a.motion = grid::physics::BodyMotion::Dynamic;
+
+    CollisionBody b = a;
+    b.name = "B";
+    b.position = {2.0, 0.0, 0.0};
+    pw.addBody(a);
+    pw.addBody(b);
+    pw.setSimulatedBodyVelocity("A", {10.0, 0.0, 0.0});
+    pw.setSimulatedBodyVelocity("B", {-10.0, 0.0, 0.0});
+
+    const auto collisions = pw.step(0.2);
+    ASSERT_FALSE(collisions.empty());
+    EXPECT_GT(collisions.front().impulse, 0.0);
+    EXPECT_GT(std::abs(collisions.front().normal[0]), 0.9);
+    EXPECT_GT(std::abs(collisions.front().relativeVelocity[0]), 0.0);
+}
+
 TEST(PhysicsWorldTest, UpdatePreservesPreviousPosition)
 {
     PhysicsWorld pw;

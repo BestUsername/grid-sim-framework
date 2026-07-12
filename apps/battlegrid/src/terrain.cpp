@@ -99,52 +99,6 @@ double TerrainMap::heightAt(double x, double z) const
     return terrainHeight(at(ix, iz));
 }
 
-double TerrainMap::maxHeightInRadius(double x, double z, double radius) const
-{
-    int minX = static_cast<int>(std::floor(x - radius));
-    int maxX = static_cast<int>(std::floor(x + radius));
-    int minZ = static_cast<int>(std::floor(z - radius));
-    int maxZ = static_cast<int>(std::floor(z + radius));
-
-    double maxH = heightAt(x, z);
-    for (int ix = minX; ix <= maxX; ++ix) {
-        for (int iz = minZ; iz <= maxZ; ++iz) {
-            double h = terrainHeight(at(
-                static_cast<size_t>(std::max(0, ix)),
-                static_cast<size_t>(std::max(0, iz))));
-            if (h > maxH) maxH = h;
-        }
-    }
-    return maxH;
-}
-
-TerrainMap::TerrainSample TerrainMap::maxTerrainInRadius(double x, double z,
-                                                         double radius) const
-{
-    int minX = static_cast<int>(std::floor(x - radius));
-    int maxX = static_cast<int>(std::floor(x + radius));
-    int minZ = static_cast<int>(std::floor(z - radius));
-    int maxZ = static_cast<int>(std::floor(z + radius));
-
-    auto cx = static_cast<size_t>(std::max(0.0, x));
-    auto cz = static_cast<size_t>(std::max(0.0, z));
-    TerrainType bestType = at(cx, cz);
-    double bestH = terrainHeight(bestType);
-
-    for (int ix = minX; ix <= maxX; ++ix) {
-        for (int iz = minZ; iz <= maxZ; ++iz) {
-            TerrainType t = at(static_cast<size_t>(std::max(0, ix)),
-                               static_cast<size_t>(std::max(0, iz)));
-            double h = terrainHeight(t);
-            if (h > bestH) {
-                bestH = h;
-                bestType = t;
-            }
-        }
-    }
-    return {bestH, bestType};
-}
-
 bool TerrainMap::inBounds(size_t x, size_t z) const
 {
     return x < m_width && z < m_height;

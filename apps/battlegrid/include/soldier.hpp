@@ -5,7 +5,7 @@
 #include "entity_types.hpp"
 #include "terrain.hpp"
 
-#include "libphysics/kinematic_body.hpp"
+#include "libphysics/collision_body.hpp"
 #include "libsim/base_agent.hpp"
 #include "libsim/sense_event.hpp"
 
@@ -55,12 +55,16 @@ public:
     void setYaw(double yaw) { m_yaw = yaw; }
     double yaw() const { return m_yaw; }
 
-    /// Jump (sets vertical velocity if grounded).
+    /// Request a physics-world jump on the next simulation step.
     void jump();
-    bool isGrounded() const;
+    bool consumeJumpRequest();
 
-    grid::physics::KinematicBody& body() { return m_body; }
-    const grid::physics::KinematicBody& body() const { return m_body; }
+    /// Submit horizontal movement intent; BattleGridWorld owns the transform.
+    void setMovementVelocity(double x, double z) { m_movementVelocity = {x, z}; }
+    grid::physics::Vec3 movementVelocity() const
+    {
+        return {m_movementVelocity[0], 0.0, m_movementVelocity[1]};
+    }
 
     double health() const { return m_health; }
     double maxHealth() const { return kMaxHealth; }
@@ -75,8 +79,6 @@ public:
 
 private:
     void moveTowardTarget(double dt);
-    void applyGravity(double dt);
-
     Faction           m_faction;
     const TerrainMap& m_map;
     double            m_speed;
@@ -89,11 +91,10 @@ private:
 
     bool   m_hasTarget = false;
     COORD  m_target{0.0, 0.0, 0.0};
-    grid::physics::KinematicBody m_body;
+    std::array<double, 2> m_movementVelocity{0.0, 0.0};
+    bool m_jumpRequested = false;
 
-    static constexpr double kGravity         = 20.0;
-    static constexpr double kJumpSpeed       =  8.0;
-    static constexpr double kMaxStepUp       =  1.2;
+    static constexpr double kJumpSpeed = 8.0;
 };
 
 } // namespace battlegrid

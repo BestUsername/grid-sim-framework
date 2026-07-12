@@ -16,8 +16,9 @@ namespace grid::physics {
  *
  * Owns a registry of CollisionBody objects and runs a fixed-timestep
  * simulation to detect overlaps, compute contact normals, and resolve
- * elastic impulses.  The game layer syncs entity positions each frame,
- * calls step(), and dispatches the resulting Collision records as events.
+ * elastic impulses. Dynamic body transforms are authoritative in Box3D;
+ * the game layer supplies velocity intentions, calls step(), and dispatches
+ * the resulting Collision records as events.
  *
  * The fixed timestep guarantees frame-rate-independent, deterministic
  * results — critical for distributed simulation (DIS/HLA) where every
@@ -51,7 +52,7 @@ public:
     void removeStaticBox(const std::string& name);
     void clearStaticBoxes();
 
-    /// Update a body's position.  Call once per frame before step().
+    /// Update an externally controlled body's position before step().
     void updateBodyPosition(const std::string& name,
                             double x, double y, double z);
 
@@ -64,6 +65,11 @@ public:
     /// Set the Box3D velocity for a dynamic body.
     void setSimulatedBodyVelocity(const std::string& name, const Vec3& velocity);
     std::optional<Vec3> simulatedBodyVelocity(const std::string& name) const;
+    /// Whether the body has a current Box3D contact with static geometry.
+    bool simulatedBodyTouchesStatic(const std::string& name) const;
+
+    /// Set world gravity. Bodies opt in with CollisionBody::gravityScale.
+    void setGravity(const Vec3& gravity);
 
     std::size_t bodyCount() const { return m_bodies.size(); }
     std::size_t staticBoxCount() const;

@@ -2,6 +2,7 @@
 #include "civilian.hpp"
 #include "vehicle.hpp"
 #include "terrain.hpp"
+#include "battlegrid_world.hpp"
 #include "libphysics/collision_event.hpp"
 #include "libsim/base_engine.hpp"
 
@@ -242,91 +243,51 @@ TEST(CivilianHealthTest, DeadCivilianDoesNotMove)
     EXPECT_EQ(c.location(), before);
 }
 
-// ── Terrain collision outcomes ──────────────────────────────────────
-
-TEST(TerrainCollisionTest, PassWhenWithinStepUp)
+TEST(BattleGridPhysicsTest, DynamicBodyAppliesSolvedTransform)
 {
-    // heightDelta = 1.5, maxStepUp = 2.0 → Pass
-    auto r = battlegrid::resolveTerrainCollision(1.5, 2.0, 10.0, 2000.0, 50000.0);
-    EXPECT_EQ(r.outcome, battlegrid::TerrainCollisionOutcome::Pass);
-    EXPECT_DOUBLE_EQ(r.damage, 0.0);
-    EXPECT_DOUBLE_EQ(r.speedMultiplier, 1.0);
+    BattleGridWorld world;
+    world.loadMap(TerrainMap(16, 16, TerrainType::Land));
+    InputMap input;
+    world.populate(input);
+
+    Soldier& player = world.playerSoldier();
+    const COORD start = player.location();
+    ASSERT_EQ(world.physicsWorld().body(player.name())->motion,
+              grid::physics::BodyMotion::Dynamic);
+
+    player.setMovementVelocity(6.0, 0.0);
+    auto positions = world.engine().snapshotAgentPositions();
+    world.stepCollisions(0.1, positions);
+
+    const auto solved = world.physicsWorld().simulatedBodyPosition(player.name());
+    ASSERT_TRUE(solved.has_value());
+    EXPECT_GT((*solved)[0], start[0]);
+    EXPECT_DOUBLE_EQ(player.location()[0], (*solved)[0]);
+    EXPECT_DOUBLE_EQ(positions.at(player.name())[0], (*solved)[0]);
 }
 
-TEST(TerrainCollisionTest, PassWhenDownhill)
+TEST(BattleGridPhysicsTest, MountedDriverUsesVehicleTransformUntilDismount)
 {
-    // Negative heightDelta → Pass
-    auto r = battlegrid::resolveTerrainCollision(-3.0, 2.0, 10.0, 2000.0, 50000.0);
-    EXPECT_EQ(r.outcome, battlegrid::TerrainCollisionOutcome::Pass);
-}
+    BattleGridWorld world;
+    world.loadMap(TerrainMap(16, 16, TerrainType::Land));
+    InputMap input;
+    world.populate(input);
 
-TEST(TerrainCollisionTest, SpeedBumpSmallExcess)
-{
-    // heightDelta = 2.8, maxStepUp = 2.0 → excess = 0.8 ≤ 1.0 → SpeedBump
-    auto r = battlegrid::resolveTerrainCollision(2.8, 2.0, 10.0, 2000.0, 50000.0);
-    EXPECT_EQ(r.outcome, battlegrid::TerrainCollisionOutcome::SpeedBump);
-    EXPECT_GT(r.damage, 0.0);
-    EXPECT_DOUBLE_EQ(r.speedMultiplier, 0.7);
-    // damage = speed * excess * 0.5 = 10 * 0.8 * 0.5 = 4.0
-    EXPECT_DOUBLE_EQ(r.damage, 4.0);
-}
+    Vehicle* vehicle = nullptr;
+    for (const auto& agent : world.getAllAgents()) {
+        vehicle = dynamic_cast<Vehicle*>(agent.get());
+        if (vehicle) break;
+    }
+    ASSERT_NE(vehicle, nullptr);
 
-TEST(TerrainCollisionTest, HardStopAgainstMountain)
-{
-    // Land→Mountain: delta = 5.0, excess = 3.0, speed = 10, mass = 2000
-    // momentum = 20000 < mountainStrength = 50000 → HardStop
-    auto r = battlegrid::resolveTerrainCollision(5.0, 2.0, 10.0, 2000.0, 50000.0);
-    EXPECT_EQ(r.outcome, battlegrid::TerrainCollisionOutcome::HardStop);
-    EXPECT_DOUBLE_EQ(r.damage, 20.0);  // speed * 2
-    EXPECT_DOUBLE_EQ(r.speedMultiplier, 0.0);
-}
+    Soldier& player = world.playerSoldier();
+    ASSERT_TRUE(world.mountSoldier(player, *vehicle));
+    EXPECT_EQ(world.physicsWorld().body(player.name()), nullptr);
 
-TEST(TerrainCollisionTest, CrashThroughAtHighSpeed)
-{
-    // Same mountain but speed = 30 → momentum = 60000 > 50000 → CrashThrough
-    auto r = battlegrid::resolveTerrainCollision(5.0, 2.0, 30.0, 2000.0, 50000.0);
-    EXPECT_EQ(r.outcome, battlegrid::TerrainCollisionOutcome::CrashThrough);
-    EXPECT_DOUBLE_EQ(r.damage, 25.0);  // obstacleStrength / mass
-    EXPECT_DOUBLE_EQ(r.speedMultiplier, 0.3);
-}
+    auto positions = world.engine().snapshotAgentPositions();
+    world.stepCollisions(0.1, positions);
+    EXPECT_EQ(player.location(), vehicle->location());
 
-TEST(TerrainCollisionTest, CrashThroughDirtMound)
-{
-    // Dirt/land obstacle strength = 5000, speed = 10, mass = 2000
-    // momentum = 20000 > 5000 → CrashThrough even at moderate speed
-    auto r = battlegrid::resolveTerrainCollision(4.0, 2.0, 10.0, 2000.0, 5000.0);
-    EXPECT_EQ(r.outcome, battlegrid::TerrainCollisionOutcome::CrashThrough);
-    EXPECT_DOUBLE_EQ(r.damage, 2.5);  // 5000 / 2000
-    EXPECT_DOUBLE_EQ(r.speedMultiplier, 0.3);
-}
-
-TEST(TerrainCollisionTest, HardStopZeroStrength)
-{
-    // Zero obstacle strength and large excess → HardStop (not crash-through)
-    auto r = battlegrid::resolveTerrainCollision(5.0, 2.0, 10.0, 2000.0, 0.0);
-    EXPECT_EQ(r.outcome, battlegrid::TerrainCollisionOutcome::HardStop);
-}
-
-TEST(TerrainCollisionTest, ObstacleStrengthValues)
-{
-    EXPECT_DOUBLE_EQ(battlegrid::terrainObstacleStrength(battlegrid::TerrainType::Water), 0.0);
-    EXPECT_DOUBLE_EQ(battlegrid::terrainObstacleStrength(battlegrid::TerrainType::Land), 5000.0);
-    EXPECT_DOUBLE_EQ(battlegrid::terrainObstacleStrength(battlegrid::TerrainType::Mountain), 50000.0);
-}
-
-TEST(TerrainCollisionTest, MaxTerrainInRadiusReturnsType)
-{
-    // 5×5 map: mostly land, one mountain cell
-    battlegrid::TerrainMap map(5, 5, battlegrid::TerrainType::Land);
-    map.set(3, 3, battlegrid::TerrainType::Mountain);
-
-    // Sample at (3.0, 3.0) with radius 1.0 should find the mountain
-    auto sample = map.maxTerrainInRadius(3.0, 3.0, 1.0);
-    EXPECT_EQ(sample.type, battlegrid::TerrainType::Mountain);
-    EXPECT_DOUBLE_EQ(sample.height, 5.0);
-
-    // Sample far from mountain should find only land
-    auto sample2 = map.maxTerrainInRadius(0.5, 0.5, 0.5);
-    EXPECT_EQ(sample2.type, battlegrid::TerrainType::Land);
-    EXPECT_DOUBLE_EQ(sample2.height, 0.0);
+    world.dismountSoldier(player, *vehicle);
+    ASSERT_NE(world.physicsWorld().body(player.name()), nullptr);
 }

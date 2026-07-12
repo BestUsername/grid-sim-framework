@@ -65,10 +65,14 @@ public:
     Vehicle* findNearestVehicle(const COORD& pos, double range,
                                 const std::unordered_map<std::string, COORD>& positions) const;
 
-    /// Sync entity positions into the physics world, run collision
-    /// detection, and dispatch CollisionEvents to participating agents.
+    /// Submit actor velocity intentions, step Box3D, apply solved transforms,
+    /// and dispatch CollisionEvents to participating agents.
     void stepCollisions(double dt,
-                        const std::unordered_map<std::string, COORD>& positions);
+                        std::unordered_map<std::string, COORD>& positions);
+
+    /// Transfer a soldier between its own dynamic body and a vehicle seat.
+    bool mountSoldier(Soldier& soldier, Vehicle& vehicle);
+    void dismountSoldier(Soldier& soldier, Vehicle& vehicle);
 
     /// Access the physics world (e.g. to change simulation mode).
     grid::physics::PhysicsWorld& physicsWorld() { return m_physicsWorld; }
@@ -77,7 +81,9 @@ private:
     void rebuildTerrainColliders();
     COORD findSpawnPoint(TerrainType required) const;
     void registerCollisionBody(const std::string& name, const COORD& pos,
-                               double mass, double radius);
+                               double mass, double radius, double gravityScale = 1.0);
+    void submitActorVelocities();
+    void applySolvedTransforms(std::unordered_map<std::string, COORD>& positions);
 
     BASE_ENGINE  m_engine;
     TerrainMap   m_terrain;

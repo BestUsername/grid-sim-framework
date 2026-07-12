@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <utility>
 
 namespace battlegrid {
 
@@ -31,14 +32,13 @@ void Civilian::update(grid::libsim::DeltaType delta)
     double dt = delta.count();
 
     if (isDead()) {
-        applyGravity(dt);
+        m_movementVelocity = {0.0, 0.0};
         return;
     }
 
     if (m_fleeing && m_hasTarget) {
         moveTowardTarget(dt);
         if (!m_hasTarget) m_fleeing = false;
-        applyGravity(dt);
         return;
     }
 
@@ -51,7 +51,6 @@ void Civilian::update(grid::libsim::DeltaType delta)
     if (m_hasTarget) {
         moveTowardTarget(dt);
     }
-    applyGravity(dt);
 }
 
 void Civilian::takeDamage(double amount)
@@ -108,7 +107,8 @@ void Civilian::on_event(grid::libevent::Event* event)
 
 void Civilian::pickNewWanderTarget()
 {
-    // Pick a random nearby land position
+    // Pick a random nearby in-bounds position; Box3D terrain determines
+    // whether the route can be traversed.
     double range = 10.0;
     for (int attempt = 0; attempt < 10; ++attempt) {
         double ox = (static_cast<double>(std::rand()) / RAND_MAX - 0.5) * 2.0 * range;
@@ -116,15 +116,15 @@ void Civilian::pickNewWanderTarget()
         double tx = m_location[0] + ox;
         double tz = m_location[2] + oz;
 
-        auto ix = static_cast<size_t>(std::max(0.0, tx));
-        auto iz = static_cast<size_t>(std::max(0.0, tz));
-        if (m_map.inBounds(ix, iz) && isTraversableByLand(m_map.at(ix, iz))) {
+        if (tx >= 0.0 && tz >= 0.0
+            && m_map.inBounds(static_cast<size_t>(tx), static_cast<size_t>(tz))) {
             m_target = COORD{tx, 0.0, tz};
             m_hasTarget = true;
             return;
         }
     }
     m_hasTarget = false;
+    m_movementVelocity = {0.0, 0.0};
 }
 
 void Civilian::moveTowardTarget(double dt)
@@ -136,60 +136,28 @@ void Civilian::moveTowardTarget(double dt)
 
     if (dist < 0.5) {
         m_hasTarget = false;
+        m_movementVelocity = {0.0, 0.0};
         return;
     }
 
-    auto ix = static_cast<size_t>(std::max(0.0, m_location[0]));
-    auto iz = static_cast<size_t>(std::max(0.0, m_location[2]));
-    TerrainType terrain = m_map.at(ix, iz);
-
-    double speedFactor = isGrounded() ? terrainSpeedFactor(terrain) : 1.0;
-
-    if (isGrounded() && !isTraversableByLand(terrain)) {
-        m_hasTarget = false;
-        return;
-    }
-
-    double effectiveSpeed = m_speed * speedFactor;
+    double effectiveSpeed = m_speed;
     if (m_fleeing) effectiveSpeed *= 1.5; // panic sprint
-    double step = effectiveSpeed * dt;
-    if (step > dist) step = dist;
 
     double nx = dx / dist;
     double nz = dz / dist;
-
-    double newX = m_location[0] + nx * step;
-    double newZ = m_location[2] + nz * step;
-
-    // Slope/wall check: sample the whole footprint, not just the centre
-    double targetGroundH = m_map.maxHeightInRadius(newX, newZ, kCollisionRadius);
-    if (grid::physics::KinematicBody::isTooSteep(m_location[1], targetGroundH,
-                                                  kMaxStepUp)) {
-        m_hasTarget = false;
-        return;
-    }
-
-    m_location[0] = newX;
-    m_location[2] = newZ;
+    effectiveSpeed = std::min(effectiveSpeed, dist / std::max(dt, 1e-12));
+    m_movementVelocity = {nx * effectiveSpeed, nz * effectiveSpeed};
     m_yaw = std::atan2(nz, nx);
 }
 
 void Civilian::jump()
 {
-    double groundH = m_map.heightAt(m_location[0], m_location[2]);
-    m_body.tryJump(m_location[1], groundH, kJumpSpeed);
+    m_jumpRequested = true;
 }
 
-bool Civilian::isGrounded() const
+bool Civilian::consumeJumpRequest()
 {
-    double terrainH = m_map.heightAt(m_location[0], m_location[2]);
-    return m_body.isGrounded(m_location[1], terrainH);
-}
-
-void Civilian::applyGravity(double dt)
-{
-    double groundH = m_map.heightAt(m_location[0], m_location[2]);
-    m_location[1] = m_body.applyGravity(dt, m_location[1], groundH, kGravity);
+    return std::exchange(m_jumpRequested, false);
 }
 
 } // namespace battlegrid

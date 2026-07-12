@@ -7,8 +7,6 @@
 #include "terrain.hpp"
 #include "vehicle.hpp"
 
-#include "libphysics/kinematic_body.hpp"
-
 #include <cmath>
 
 namespace battlegrid {
@@ -89,15 +87,6 @@ private:
 
     // Position from the per-frame snapshot (thread-safe for camera)
     COORD m_snapshotPos{0.0, 0.0, 0.0};
-
-    // Vertical physics
-    grid::physics::KinematicBody m_body;
-    static constexpr double kGravity     = 20.0; // m/s²
-    static constexpr double kJumpSpeed   =  8.0; // m/s
-    static constexpr double kMaxStepUp   =  1.2; // m
-
-    // Collision footprint radius (matching Soldier)
-    static constexpr double kCollisionRadius = 0.4;
 
     // Height offset for first person (eye level)
     static constexpr double kEyeHeight = 1.7;

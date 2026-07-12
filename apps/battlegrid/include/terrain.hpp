@@ -30,34 +30,6 @@ inline double terrainHeight(TerrainType t)
     return 0.0;
 }
 
-/// Movement speed multiplier on this terrain (1.0 = normal).
-inline double terrainSpeedFactor(TerrainType t)
-{
-    switch (t) {
-    case TerrainType::Water:    return 0.3;
-    case TerrainType::Land:     return 1.0;
-    case TerrainType::Mountain: return 0.5;
-    }
-    return 1.0;
-}
-
-/// How hard this terrain resists a vehicle that tries to drive through
-/// a height barrier it creates.  Zero means no resistance (water).
-inline double terrainObstacleStrength(TerrainType t)
-{
-    switch (t) {
-    case TerrainType::Water:    return     0.0;
-    case TerrainType::Land:     return  5000.0;  // dirt / rubble — breakable
-    case TerrainType::Mountain: return 50000.0;  // solid rock
-    }
-    return 10000.0;
-}
-
-/// Whether a ground unit can traverse this terrain.
-inline bool isTraversableByLand(TerrainType t) { return t != TerrainType::Water; }
-inline bool isTraversableBySea(TerrainType t)  { return t == TerrainType::Water; }
-inline bool isTraversableByAir(TerrainType /*t*/) { return true; }
-
 /**
  * @brief A 2D grid-based terrain map that can be loaded from a file.
  *
@@ -91,17 +63,6 @@ public:
 
     /// Get the 3D Y-height for a world position (x, z).
     double heightAt(double x, double z) const;
-
-    /// Get the maximum terrain height across all grid cells within a
-    /// circular footprint of the given radius centred at (x, z).
-    double maxHeightInRadius(double x, double z, double radius) const;
-
-    /// Height + terrain type of the tallest cell within a footprint.
-    struct TerrainSample {
-        double      height;
-        TerrainType type;
-    };
-    TerrainSample maxTerrainInRadius(double x, double z, double radius) const;
 
     /// Check if a position is within map bounds.
     bool inBounds(size_t x, size_t z) const;

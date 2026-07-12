@@ -34,7 +34,7 @@ struct PhysicsWorld::Backend {
 
         b3BodyDef definition = b3DefaultBodyDef();
         definition.type = body.motion == BodyMotion::Dynamic ? b3_dynamicBody : b3_kinematicBody;
-        definition.gravityScale = 0.0f;
+        definition.gravityScale = static_cast<float>(body.gravityScale);
         definition.position = {
             static_cast<float>(body.position[0]),
             static_cast<float>(body.position[1]),
@@ -158,6 +158,34 @@ struct PhysicsWorld::Backend {
         return Vec3{velocity.x, velocity.y, velocity.z};
     }
 
+    bool touchesStatic(const std::string& name) const
+    {
+        const auto bodyIt = bodies.find(name);
+        const auto shapeIt = shapes.find(name);
+        if (bodyIt == bodies.end() || shapeIt == shapes.end()) {
+            return false;
+        }
+
+        const int capacity = b3Body_GetContactCapacity(bodyIt->second);
+        if (capacity == 0) {
+            return false;
+        }
+        std::vector<b3ContactData> contacts(static_cast<size_t>(capacity));
+        const int count = b3Body_GetContactData(bodyIt->second, contacts.data(), capacity);
+        for (int index = 0; index < count; ++index) {
+            const b3ShapeId otherShape = B3_ID_EQUALS(contacts[index].shapeIdA, shapeIt->second)
+                ? contacts[index].shapeIdB
+                : contacts[index].shapeIdA;
+            const b3BodyId otherBody = b3Shape_GetBody(otherShape);
+            for (const auto& [staticName, staticBody] : staticBoxes) {
+                if (B3_ID_EQUALS(otherBody, staticBody)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     std::optional<std::string> nameForShape(b3ShapeId shapeId) const
     {
         for (const auto& [name, candidate] : shapes) {
@@ -244,6 +272,19 @@ std::optional<Vec3> PhysicsWorld::simulatedBodyVelocity(const std::string& name)
     return m_backend->velocity(name);
 }
 
+bool PhysicsWorld::simulatedBodyTouchesStatic(const std::string& name) const
+{
+    return m_backend->touchesStatic(name);
+}
+
+void PhysicsWorld::setGravity(const Vec3& gravity)
+{
+    b3World_SetGravity(
+        m_backend->world,
+        {static_cast<float>(gravity[0]), static_cast<float>(gravity[1]),
+         static_cast<float>(gravity[2])});
+}
+
 // ── Simulation ──────────────────────────────────────────────────────
 
 std::vector<Collision> PhysicsWorld::step(double dt)
@@ -263,6 +304,15 @@ std::vector<Collision> PhysicsWorld::step(double dt)
         subStep(m_fixedTimestep, collisions);
         m_accumulator -= m_fixedTimestep;
         ++steps;
+    }
+
+    for (auto& [name, body] : m_bodies) {
+        if (body.motion == BodyMotion::Dynamic) {
+            if (const auto position = m_backend->position(name)) {
+                body.prevPosition = body.position;
+                body.position = *position;
+            }
+        }
     }
 
     return collisions;
@@ -301,7 +351,7 @@ void PhysicsWorld::subStep(double dt, std::vector<Collision>& out)
                 *nameA,
                 *nameB,
                 {hit.normal.x, hit.normal.y, hit.normal.z},
-                {velocityB.x - velocityA.x, velocityB.y - velocityA.y, velocityB.z - velocityA.z},
+                {velocityA.x - velocityB.x, velocityA.y - velocityB.y, velocityA.z - velocityB.z},
                 impulse,
                 bodyA.mass,
                 bodyB.mass,
@@ -310,9 +360,8 @@ void PhysicsWorld::subStep(double dt, std::vector<Collision>& out)
         return;
     }
 
-    // Agents still own transforms during the compatibility phase. Keep the
-    // legacy collision records until Box3D becomes transform-authoritative.
-    // Broad phase: gather candidate pairs.
+    // Kinematic bodies are externally positioned, so retain deterministic
+    // overlap records for their compatibility use case.
     std::vector<std::pair<std::string, std::string>> pairs;
     broadPhase(pairs);
 

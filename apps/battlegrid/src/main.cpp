@@ -173,11 +173,7 @@ int main(int argc, char** argv)
         world.engine().withAgentsLock([&] {
             playerCtrl.update(dt, positions);
 
-            positions["Player"] = world.playerSoldier().location();
-            if (playerCtrl.inVehicle()) {
-                positions[playerCtrl.currentVehicle()->name()] =
-                    playerCtrl.currentVehicle()->location();
-            }
+            world.stepCollisions(dt, positions);
 
             std::string cameraEntity = playerCtrl.inVehicle()
                 ? playerCtrl.currentVehicle()->name()
@@ -186,8 +182,6 @@ int main(int argc, char** argv)
             if (it != positions.end()) {
                 playerCtrl.setSnapshotPosition(it->second);
             }
-
-            world.stepCollisions(dt, positions);
         });
 
         senseIndicators.update(static_cast<float>(dt));
