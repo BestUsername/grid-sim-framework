@@ -189,7 +189,6 @@ void PlayerController::tryMountDismount(const PositionSnapshot& positions)
         body.prevPosition = body.position;
         body.mass         = Soldier::kMass;
         body.radius       = Soldier::kCollisionRadius;
-        body.motion       = grid::physics::BodyMotion::Dynamic;
         m_world.physicsWorld().addBody(body);
         m_vehicle = nullptr;
         m_soldier.setSpeedMultiplier(1.0);

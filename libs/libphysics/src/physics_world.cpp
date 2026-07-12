@@ -10,6 +10,7 @@ namespace grid::physics {
 struct PhysicsWorld::Backend {
     b3WorldId world;
     std::unordered_map<std::string, b3BodyId> bodies;
+    std::unordered_map<std::string, b3ShapeId> shapes;
     std::unordered_map<std::string, b3BodyId> staticBoxes;
 
     Backend()
@@ -47,7 +48,7 @@ struct PhysicsWorld::Backend {
 
         b3Sphere sphere{};
         sphere.radius = static_cast<float>(body.radius);
-        b3CreateSphereShape(bodyId, &shapeDefinition, &sphere);
+        shapes[body.name] = b3CreateSphereShape(bodyId, &shapeDefinition, &sphere);
         if (body.motion == BodyMotion::Dynamic) {
             b3MassData massData = b3Body_GetMassData(bodyId);
             massData.mass = static_cast<float>(body.mass);
@@ -65,6 +66,7 @@ struct PhysicsWorld::Backend {
 
         b3DestroyBody(it->second);
         bodies.erase(it);
+        shapes.erase(name);
     }
 
     void addStaticBox(const std::string& name, const Vec3& center, const Vec3& halfExtents)
@@ -143,6 +145,16 @@ struct PhysicsWorld::Backend {
                 it->second,
                 {static_cast<float>(velocity[0]), static_cast<float>(velocity[1]), static_cast<float>(velocity[2])});
         }
+    }
+
+    std::optional<std::string> nameForShape(b3ShapeId shapeId) const
+    {
+        for (const auto& [name, candidate] : shapes) {
+            if (B3_ID_EQUALS(candidate, shapeId)) {
+                return name;
+            }
+        }
+        return std::nullopt;
     }
 };
 
@@ -243,6 +255,44 @@ std::vector<Collision> PhysicsWorld::step(double dt)
 void PhysicsWorld::subStep(double dt, std::vector<Collision>& out)
 {
     b3World_Step(m_backend->world, static_cast<float>(dt), 4);
+
+    const b3ContactEvents events = b3World_GetContactEvents(m_backend->world);
+    bool hasDynamicBodies = false;
+    for (const auto& [name, body] : m_bodies) {
+        hasDynamicBodies = hasDynamicBodies || body.motion == BodyMotion::Dynamic;
+    }
+    if (hasDynamicBodies) {
+        for (int index = 0; index < events.hitCount; ++index) {
+            const auto& hit = events.hitEvents[index];
+            const auto nameA = m_backend->nameForShape(hit.shapeIdA);
+            const auto nameB = m_backend->nameForShape(hit.shapeIdB);
+            if (!nameA || !nameB) {
+                continue;
+            }
+
+            const auto& bodyA = m_bodies.at(*nameA);
+            const auto& bodyB = m_bodies.at(*nameB);
+            const double invMassA = bodyA.mass > 0.0 ? 1.0 / bodyA.mass : 0.0;
+            const double invMassB = bodyB.mass > 0.0 ? 1.0 / bodyB.mass : 0.0;
+            const double denominator = invMassA + invMassB;
+            const double impulse = denominator > 1e-12
+                ? (1.0 + m_restitution) * hit.approachSpeed / denominator
+                : 0.0;
+            const b3Vec3 velocityA = b3Body_GetLinearVelocity(m_backend->bodies.at(*nameA));
+            const b3Vec3 velocityB = b3Body_GetLinearVelocity(m_backend->bodies.at(*nameB));
+
+            out.push_back({
+                *nameA,
+                *nameB,
+                {hit.normal.x, hit.normal.y, hit.normal.z},
+                {velocityB.x - velocityA.x, velocityB.y - velocityA.y, velocityB.z - velocityA.z},
+                impulse,
+                bodyA.mass,
+                bodyB.mass,
+                0.0});
+        }
+        return;
+    }
 
     // Agents still own transforms during the compatibility phase. Keep the
     // legacy collision records until Box3D becomes transform-authoritative.
