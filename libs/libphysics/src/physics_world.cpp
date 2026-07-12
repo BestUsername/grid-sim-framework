@@ -1,25 +1,102 @@
 #include "libphysics/physics_world.hpp"
 
+#include <box3d/box3d.h>
+
 #include <algorithm>
 #include <cmath>
 
 namespace grid::physics {
 
+struct PhysicsWorld::Backend {
+    b3WorldId world;
+    std::unordered_map<std::string, b3BodyId> bodies;
+
+    Backend()
+    {
+        b3WorldDef definition = b3DefaultWorldDef();
+        definition.gravity = {0.0f, 0.0f, 0.0f};
+        world = b3CreateWorld(&definition);
+    }
+
+    ~Backend()
+    {
+        b3DestroyWorld(world);
+    }
+
+    void addBody(const CollisionBody& body)
+    {
+        if (const auto existing = bodies.find(body.name); existing != bodies.end()) {
+            b3DestroyBody(existing->second);
+            bodies.erase(existing);
+        }
+
+        b3BodyDef definition = b3DefaultBodyDef();
+        definition.type = b3_kinematicBody;
+        definition.position = {
+            static_cast<float>(body.position[0]),
+            static_cast<float>(body.position[1]),
+            static_cast<float>(body.position[2])};
+        definition.name = body.name.c_str();
+
+        b3BodyId bodyId = b3CreateBody(world, &definition);
+        b3ShapeDef shapeDefinition = b3DefaultShapeDef();
+        shapeDefinition.enableContactEvents = true;
+        shapeDefinition.enableHitEvents = true;
+
+        b3Sphere sphere{};
+        sphere.radius = static_cast<float>(body.radius);
+        b3CreateSphereShape(bodyId, &shapeDefinition, &sphere);
+        bodies.emplace(body.name, bodyId);
+    }
+
+    void removeBody(const std::string& name)
+    {
+        const auto it = bodies.find(name);
+        if (it == bodies.end()) {
+            return;
+        }
+
+        b3DestroyBody(it->second);
+        bodies.erase(it);
+    }
+
+    void updatePosition(const std::string& name, const Vec3& position)
+    {
+        const auto it = bodies.find(name);
+        if (it == bodies.end()) {
+            return;
+        }
+
+        b3BodyDef definition = b3DefaultBodyDef();
+        b3Body_SetTransform(
+            it->second,
+            {static_cast<float>(position[0]), static_cast<float>(position[1]), static_cast<float>(position[2])},
+            definition.rotation);
+    }
+};
+
 PhysicsWorld::PhysicsWorld(double fixedTimestep)
     : m_fixedTimestep(fixedTimestep)
+    , m_backend(std::make_unique<Backend>())
 {
 }
+
+PhysicsWorld::~PhysicsWorld() = default;
+PhysicsWorld::PhysicsWorld(PhysicsWorld&&) noexcept = default;
+PhysicsWorld& PhysicsWorld::operator=(PhysicsWorld&&) noexcept = default;
 
 // ── Body registry ───────────────────────────────────────────────────
 
 void PhysicsWorld::addBody(const CollisionBody& body)
 {
     m_bodies[body.name] = body;
+    m_backend->addBody(body);
 }
 
 void PhysicsWorld::removeBody(const std::string& name)
 {
     m_bodies.erase(name);
+    m_backend->removeBody(name);
 }
 
 void PhysicsWorld::updateBodyPosition(const std::string& name,
@@ -29,6 +106,7 @@ void PhysicsWorld::updateBodyPosition(const std::string& name,
     if (it == m_bodies.end()) return;
     it->second.prevPosition = it->second.position;
     it->second.position = {x, y, z};
+    m_backend->updatePosition(name, it->second.position);
 }
 
 const CollisionBody* PhysicsWorld::body(const std::string& name) const
@@ -63,6 +141,10 @@ std::vector<Collision> PhysicsWorld::step(double dt)
 
 void PhysicsWorld::subStep(double dt, std::vector<Collision>& out)
 {
+    b3World_Step(m_backend->world, static_cast<float>(dt), 4);
+
+    // Agents still own transforms during the compatibility phase. Keep the
+    // legacy collision records until Box3D becomes transform-authoritative.
     // Broad phase: gather candidate pairs.
     std::vector<std::pair<std::string, std::string>> pairs;
     broadPhase(pairs);

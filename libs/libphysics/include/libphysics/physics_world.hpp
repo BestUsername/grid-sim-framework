@@ -4,6 +4,7 @@
 #include "libphysics/collision_body.hpp"
 
 #include <string>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -34,6 +35,12 @@ namespace grid::physics {
 class PhysicsWorld {
 public:
     explicit PhysicsWorld(double fixedTimestep = 1.0 / 120.0);
+    ~PhysicsWorld();
+
+    PhysicsWorld(const PhysicsWorld&) = delete;
+    PhysicsWorld& operator=(const PhysicsWorld&) = delete;
+    PhysicsWorld(PhysicsWorld&&) noexcept;
+    PhysicsWorld& operator=(PhysicsWorld&&) noexcept;
 
     // ── Body registry ───────────────────────────────────────────────
 
@@ -68,6 +75,8 @@ public:
     int maxSubSteps() const { return m_maxSubSteps; }
 
 private:
+    struct Backend;
+
     /// Run one fixed-timestep sub-step.
     void subStep(double dt, std::vector<Collision>& out);
 
@@ -86,6 +95,7 @@ private:
                                  double restitution);
 
     std::unordered_map<std::string, CollisionBody> m_bodies;
+    std::unique_ptr<Backend> m_backend;
     double m_fixedTimestep;
     double m_accumulator = 0.0;
     double m_frameDt     = 0.0;
