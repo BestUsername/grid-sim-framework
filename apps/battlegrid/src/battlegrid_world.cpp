@@ -189,6 +189,7 @@ void BattleGridWorld::registerCollisionBody(const std::string& name, const COORD
     body.prevPosition = body.position;
     body.mass = mass;
     body.radius = radius;
+    body.motion = grid::physics::BodyMotion::Dynamic;
     m_physicsWorld.addBody(body);
 }
 
@@ -260,39 +261,17 @@ void BattleGridWorld::stepCollisions(double dt,
     // Run fixed-timestep collision detection + impulse resolution.
     auto collisions = m_physicsWorld.step(dt);
 
-    // Apply positional separation and dispatch collision events.
     auto agents = m_engine.getAllAgents();
-    for (const auto& col : collisions) {
-        // Push overlapping entities apart by the penetration depth,
-        // weighted by inverse mass so lighter entities move more.
-        double totalMass = col.massA + col.massB;
-        if (totalMass > 1e-12) {
-            double ratioA = col.massB / totalMass;
-            double ratioB = col.massA / totalMass;
-
-            // If one entity vastly outmasses the other, only push
-            // the lighter one (a person can't shove a parked car).
-            if (col.massA > col.massB * 10.0) {
-                ratioA = 0.0; ratioB = 1.0;
-            } else if (col.massB > col.massA * 10.0) {
-                ratioA = 1.0; ratioB = 0.0;
-            }
-            for (auto& agent : agents) {
-                if (agent->name() == col.nameA) {
-                    auto loc = agent->location();
-                    loc[0] -= col.normal[0] * col.penetration * ratioA;
-                    loc[2] -= col.normal[2] * col.penetration * ratioA;
-                    agent->set_location(loc);
-                }
-                if (agent->name() == col.nameB) {
-                    auto loc = agent->location();
-                    loc[0] += col.normal[0] * col.penetration * ratioB;
-                    loc[2] += col.normal[2] * col.penetration * ratioB;
-                    agent->set_location(loc);
-                }
-            }
+    for (auto& agent : agents) {
+        auto solvedPosition = m_physicsWorld.simulatedBodyPosition(agent->name());
+        if (!solvedPosition) {
+            continue;
         }
+        agent->set_location(COORD{
+            (*solvedPosition)[0], (*solvedPosition)[1], (*solvedPosition)[2]});
+    }
 
+    for (const auto& col : collisions) {
         // Event for entity A (normal points toward B).
         grid::physics::CollisionEvent evtA(
             col.nameA, col.nameB, col.normal, col.relativeVelocity,
