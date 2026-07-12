@@ -14,6 +14,13 @@ enum class BodyMotion {
     Dynamic,
 };
 
+/// Geometric primitive used by Box3D for a CollisionBody.
+enum class CollisionShape {
+    Sphere,
+    Capsule,
+    Box,
+};
+
 /**
  * @brief Physical properties of a collision-capable body.
  *
@@ -27,9 +34,20 @@ struct CollisionBody {
     Vec3 position{};       ///< Centre position in world space.
     Vec3 prevPosition{};   ///< Position last frame (for velocity estimation).
     double mass   = 1.0;   ///< Mass in kg (0 = infinite / immovable).
-    double radius = 0.5;   ///< Bounding-sphere radius (LOD 0).
+    /// Sphere radius, or the radius of a capsule's hemispherical ends.
+    double radius = 0.5;
+    /// Shape primitive. Defaults to Sphere for backwards compatibility.
+    CollisionShape shape = CollisionShape::Sphere;
+    /// Capsule's total end-to-end height, including its hemispherical ends.
+    double capsuleHeight = 1.0;
+    /// Half dimensions of an axis-aligned box hull.
+    Vec3 boxHalfExtents{0.5, 0.5, 0.5};
     BodyMotion motion = BodyMotion::Kinematic;
     double gravityScale = 0.0; ///< Multiplier for the world's gravity.
+    bool lockVerticalMotion = false;
+    /// Lock roll and pitch. Use lockYawRotation to also lock yaw.
+    bool lockRotation = false;
+    bool lockYawRotation = true;
 };
 
 /**

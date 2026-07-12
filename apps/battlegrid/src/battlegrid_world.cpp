@@ -33,6 +33,20 @@ static grid::libmap::MapWorld terrainMapToMapWorld(const battlegrid::TerrainMap&
     return world;
 }
 
+static double shapeBottomOffset(const grid::physics::CollisionBody& body)
+{
+    using grid::physics::CollisionShape;
+    switch (body.shape) {
+    case CollisionShape::Sphere:
+        return body.radius;
+    case CollisionShape::Capsule:
+        return std::max(body.capsuleHeight, 2.0 * body.radius) * 0.5;
+    case CollisionShape::Box:
+        return body.boxHalfExtents[1];
+    }
+    return 0.0;
+}
+
 void BattleGridWorld::rebuildTerrainColliders()
 {
     constexpr double terrainDepth = 100.0;
@@ -170,29 +184,53 @@ void BattleGridWorld::populate(InputMap& inputMap)
 
     // ── Register collision bodies ───────────────────────────────────
     for (auto& s : m_soldiers)
-        registerCollisionBody(s->name(), s->location(), Soldier::kMass, Soldier::kCollisionRadius);
+        registerCollisionBody(s->name(), s->location(), Soldier::kMass, Soldier::kCollisionRadius,
+                              grid::physics::CollisionShape::Capsule, 1.8,
+                              {0.5, 0.5, 0.5}, 1.0, false, true);
     for (auto& c : m_civilians)
-        registerCollisionBody(c->name(), c->location(), Civilian::kMass, Civilian::kCollisionRadius);
+        registerCollisionBody(c->name(), c->location(), Civilian::kMass, Civilian::kCollisionRadius,
+                              grid::physics::CollisionShape::Capsule, 1.6,
+                              {0.5, 0.5, 0.5}, 1.0, false, true);
     for (auto& v : m_landVehicles)
-        registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius);
+        registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
+                              grid::physics::CollisionShape::Box, 1.0,
+                              {0.6, 0.4, 1.1}, 1.0, false, true, false);
     for (auto& v : m_seaVehicles)
-        registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius);
+        registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
+                              grid::physics::CollisionShape::Box, 1.0,
+                              {0.4, 0.3, 1.0}, 1.0, false, true, false);
     for (auto& v : m_airVehicles)
         registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
-                              v->gravityScale());
+                              grid::physics::CollisionShape::Sphere, 1.0,
+                              {0.5, 0.5, 0.5}, v->gravityScale());
 }
 
 void BattleGridWorld::registerCollisionBody(const std::string& name, const COORD& pos,
-                                            double mass, double radius, double gravityScale)
+                                            double mass, double radius,
+                                            grid::physics::CollisionShape shape,
+                                            double capsuleHeight,
+                                            grid::physics::Vec3 boxHalfExtents,
+                                            double gravityScale,
+                                            bool lockVerticalMotion, bool lockRotation,
+                                            bool lockYawRotation)
 {
     grid::physics::CollisionBody body;
     body.name = name;
-    body.position = {pos[0], pos[1] + (gravityScale > 0.0 ? radius : 0.0), pos[2]};
-    body.prevPosition = body.position;
     body.mass = mass;
     body.radius = radius;
+    body.shape = shape;
+    body.capsuleHeight = capsuleHeight;
+    body.boxHalfExtents = boxHalfExtents;
+    body.position = {
+        pos[0],
+        pos[1] + (gravityScale > 0.0 || lockVerticalMotion ? shapeBottomOffset(body) : 0.0),
+        pos[2]};
+    body.prevPosition = body.position;
     body.motion = grid::physics::BodyMotion::Dynamic;
     body.gravityScale = gravityScale;
+    body.lockVerticalMotion = lockVerticalMotion;
+    body.lockRotation = lockRotation;
+    body.lockYawRotation = lockYawRotation;
     m_physicsWorld.addBody(body);
 }
 
@@ -270,12 +308,18 @@ void BattleGridWorld::dismountSoldier(Soldier& soldier, Vehicle& vehicle)
         return;
     }
 
-    COORD position{(*vehiclePosition)[0] + Vehicle::kCollisionRadius
-                       + Soldier::kCollisionRadius + 0.1,
-                   (*vehiclePosition)[1],
-                   (*vehiclePosition)[2]};
+    double vehicleHalfWidth = Vehicle::kCollisionRadius;
+    if (const auto* body = m_physicsWorld.body(vehicle.name());
+        body && body->shape == grid::physics::CollisionShape::Box) {
+        vehicleHalfWidth = body->boxHalfExtents[0];
+    }
+    COORD position{vehicle.location()[0] + vehicleHalfWidth + Soldier::kCollisionRadius + 0.1,
+                   vehicle.location()[1],
+                   vehicle.location()[2]};
     registerCollisionBody(soldier.name(), position, Soldier::kMass,
-                          Soldier::kCollisionRadius);
+                         Soldier::kCollisionRadius,
+                         grid::physics::CollisionShape::Capsule, 1.8,
+                         {0.5, 0.5, 0.5}, 1.0, false, true);
 }
 
 void BattleGridWorld::submitActorVelocities()
@@ -317,21 +361,27 @@ void BattleGridWorld::submitActorVelocities()
 void BattleGridWorld::applySolvedTransforms(
     std::unordered_map<std::string, COORD>& positions)
 {
-    auto apply = [&](const auto& actor) {
+    auto apply = [&](const auto& actor, bool locationIsGrounded) {
         const auto position = m_physicsWorld.simulatedBodyPosition(actor->name());
         if (!position) {
             return;
         }
-        const COORD solved{(*position)[0], (*position)[1], (*position)[2]};
+        double bottomOffset = 0.0;
+        if (locationIsGrounded) {
+            if (const auto* body = m_physicsWorld.body(actor->name())) {
+                bottomOffset = shapeBottomOffset(*body);
+            }
+        }
+        const COORD solved{(*position)[0], (*position)[1] - bottomOffset, (*position)[2]};
         actor->set_location(solved);
         positions[actor->name()] = solved;
     };
 
-    for (const auto& soldier : m_soldiers) apply(soldier);
-    for (const auto& civilian : m_civilians) apply(civilian);
-    for (const auto& vehicle : m_landVehicles) apply(vehicle);
-    for (const auto& vehicle : m_seaVehicles) apply(vehicle);
-    for (const auto& vehicle : m_airVehicles) apply(vehicle);
+    for (const auto& soldier : m_soldiers) apply(soldier, true);
+    for (const auto& civilian : m_civilians) apply(civilian, true);
+    for (const auto& vehicle : m_landVehicles) apply(vehicle, true);
+    for (const auto& vehicle : m_seaVehicles) apply(vehicle, true);
+    for (const auto& vehicle : m_airVehicles) apply(vehicle, false);
 
     for (const auto& vehicle : m_landVehicles) {
         if (auto* driver = vehicle->driver()) {
@@ -360,6 +410,12 @@ void BattleGridWorld::stepCollisions(double dt,
                                      std::unordered_map<std::string, COORD>& positions)
 {
     submitActorVelocities();
+    for (const auto& vehicle : m_landVehicles) {
+        m_physicsWorld.setSimulatedBodyYaw(vehicle->name(), vehicle->yaw());
+    }
+    for (const auto& vehicle : m_seaVehicles) {
+        m_physicsWorld.setSimulatedBodyYaw(vehicle->name(), vehicle->yaw());
+    }
     const auto collisions = m_physicsWorld.step(dt);
     applySolvedTransforms(positions);
 

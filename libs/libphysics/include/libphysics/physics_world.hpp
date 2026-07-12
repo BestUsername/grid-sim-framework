@@ -65,6 +65,9 @@ public:
     /// Set the Box3D velocity for a dynamic body.
     void setSimulatedBodyVelocity(const std::string& name, const Vec3& velocity);
     std::optional<Vec3> simulatedBodyVelocity(const std::string& name) const;
+    /// Set an upright body's yaw in radians while preserving its position and velocity.
+    /// Returns false if the body does not exist or @p yaw is not finite.
+    bool setSimulatedBodyYaw(const std::string& name, double yaw);
     /// Whether the body has a current Box3D contact with static geometry.
     bool simulatedBodyTouchesStatic(const std::string& name) const;
 

@@ -7,6 +7,26 @@
 
 namespace grid::physics {
 
+namespace {
+
+double boundingRadius(const CollisionBody& body)
+{
+    switch (body.shape) {
+    case CollisionShape::Sphere:
+        return body.radius;
+    case CollisionShape::Capsule:
+        return std::max(body.radius, body.capsuleHeight * 0.5);
+    case CollisionShape::Box:
+        return std::sqrt(
+            body.boxHalfExtents[0] * body.boxHalfExtents[0]
+            + body.boxHalfExtents[1] * body.boxHalfExtents[1]
+            + body.boxHalfExtents[2] * body.boxHalfExtents[2]);
+    }
+    return body.radius;
+}
+
+} // namespace
+
 struct PhysicsWorld::Backend {
     b3WorldId world;
     std::unordered_map<std::string, b3BodyId> bodies;
@@ -35,6 +55,10 @@ struct PhysicsWorld::Backend {
         b3BodyDef definition = b3DefaultBodyDef();
         definition.type = body.motion == BodyMotion::Dynamic ? b3_dynamicBody : b3_kinematicBody;
         definition.gravityScale = static_cast<float>(body.gravityScale);
+        definition.motionLocks.linearY = body.lockVerticalMotion;
+        definition.motionLocks.angularX = body.lockRotation;
+        definition.motionLocks.angularY = body.lockRotation && body.lockYawRotation;
+        definition.motionLocks.angularZ = body.lockRotation;
         definition.position = {
             static_cast<float>(body.position[0]),
             static_cast<float>(body.position[1]),
@@ -46,11 +70,38 @@ struct PhysicsWorld::Backend {
         shapeDefinition.enableContactEvents = true;
         shapeDefinition.enableHitEvents = true;
 
-        b3Sphere sphere{};
-        sphere.radius = static_cast<float>(body.radius);
-        shapes[body.name] = b3CreateSphereShape(bodyId, &shapeDefinition, &sphere);
+        switch (body.shape) {
+        case CollisionShape::Sphere: {
+            b3Sphere sphere{};
+            sphere.radius = static_cast<float>(body.radius);
+            shapes[body.name] = b3CreateSphereShape(bodyId, &shapeDefinition, &sphere);
+            break;
+        }
+        case CollisionShape::Capsule: {
+            const double height = std::max(body.capsuleHeight, 2.0 * body.radius);
+            const float halfSegment = static_cast<float>((height - 2.0 * body.radius) * 0.5);
+            b3Capsule capsule{};
+            capsule.center1 = {0.0f, -halfSegment, 0.0f};
+            capsule.center2 = {0.0f, halfSegment, 0.0f};
+            capsule.radius = static_cast<float>(body.radius);
+            shapes[body.name] = b3CreateCapsuleShape(bodyId, &shapeDefinition, &capsule);
+            break;
+        }
+        case CollisionShape::Box: {
+            b3BoxHull box = b3MakeBoxHull(
+                static_cast<float>(body.boxHalfExtents[0]),
+                static_cast<float>(body.boxHalfExtents[1]),
+                static_cast<float>(body.boxHalfExtents[2]));
+            shapes[body.name] = b3CreateHullShape(bodyId, &shapeDefinition, &box.base);
+            break;
+        }
+        }
         if (body.motion == BodyMotion::Dynamic) {
             b3MassData massData = b3Body_GetMassData(bodyId);
+            if (massData.mass > 0.0f) {
+                massData.inertia = b3MulSM(
+                    static_cast<float>(body.mass / massData.mass), massData.inertia);
+            }
             massData.mass = static_cast<float>(body.mass);
             b3Body_SetMassData(bodyId, massData);
         }
@@ -119,11 +170,11 @@ struct PhysicsWorld::Backend {
             return;
         }
 
-        b3BodyDef definition = b3DefaultBodyDef();
+        const b3Quat rotation = b3Body_GetRotation(it->second);
         b3Body_SetTransform(
             it->second,
             {static_cast<float>(position[0]), static_cast<float>(position[1]), static_cast<float>(position[2])},
-            definition.rotation);
+            rotation);
     }
 
     std::optional<Vec3> position(const std::string& name) const
@@ -156,6 +207,22 @@ struct PhysicsWorld::Backend {
 
         const b3Vec3 velocity = b3Body_GetLinearVelocity(it->second);
         return Vec3{velocity.x, velocity.y, velocity.z};
+    }
+
+    bool setYaw(const std::string& name, double yaw)
+    {
+        const auto it = bodies.find(name);
+        if (it == bodies.end() || !std::isfinite(yaw)) {
+            return false;
+        }
+
+        const b3Pos position = b3Body_GetPosition(it->second);
+        const b3Vec3 velocity = b3Body_GetLinearVelocity(it->second);
+        const b3Quat rotation = b3MakeQuatFromAxisAngle(
+            {0.0f, 1.0f, 0.0f}, static_cast<float>(yaw));
+        b3Body_SetTransform(it->second, position, rotation);
+        b3Body_SetLinearVelocity(it->second, velocity);
+        return true;
     }
 
     bool touchesStatic(const std::string& name) const
@@ -270,6 +337,11 @@ void PhysicsWorld::setSimulatedBodyVelocity(const std::string& name, const Vec3&
 std::optional<Vec3> PhysicsWorld::simulatedBodyVelocity(const std::string& name) const
 {
     return m_backend->velocity(name);
+}
+
+bool PhysicsWorld::setSimulatedBodyYaw(const std::string& name, double yaw)
+{
+    return m_backend->setYaw(name, yaw);
 }
 
 bool PhysicsWorld::simulatedBodyTouchesStatic(const std::string& name) const
@@ -397,7 +469,7 @@ void PhysicsWorld::broadPhase(
             double dy = a->position[1] - b->position[1];
             double dz = a->position[2] - b->position[2];
             double distSq = dx * dx + dy * dy + dz * dz;
-            double sumR = a->radius + b->radius;
+            double sumR = boundingRadius(*a) + boundingRadius(*b);
             if (distSq < sumR * sumR) {
                 pairs.emplace_back(a->name, b->name);
             }
@@ -409,12 +481,13 @@ void PhysicsWorld::narrowPhase(const CollisionBody& a, const CollisionBody& b,
                                double dt,
                                std::vector<Collision>& out) const
 {
-    // Sphere-sphere narrow phase (matches broad phase for now).
+    // Kinematic compatibility path: approximate non-spherical shapes with
+    // their enclosing spheres. Dynamic bodies use Box3D's exact shapes.
     double dx = b.position[0] - a.position[0];
     double dy = b.position[1] - a.position[1];
     double dz = b.position[2] - a.position[2];
     double distSq = dx * dx + dy * dy + dz * dz;
-    double sumR = a.radius + b.radius;
+    double sumR = boundingRadius(a) + boundingRadius(b);
 
     if (distSq >= sumR * sumR) return;
 

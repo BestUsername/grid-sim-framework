@@ -81,7 +81,13 @@ private:
     void rebuildTerrainColliders();
     COORD findSpawnPoint(TerrainType required) const;
     void registerCollisionBody(const std::string& name, const COORD& pos,
-                               double mass, double radius, double gravityScale = 1.0);
+                               double mass, double radius,
+                               grid::physics::CollisionShape shape = grid::physics::CollisionShape::Sphere,
+                               double capsuleHeight = 1.0,
+                               grid::physics::Vec3 boxHalfExtents = {0.5, 0.5, 0.5},
+                               double gravityScale = 1.0,
+                               bool lockVerticalMotion = false, bool lockRotation = false,
+                               bool lockYawRotation = true);
     void submitActorVelocities();
     void applySolvedTransforms(std::unordered_map<std::string, COORD>& positions);
 

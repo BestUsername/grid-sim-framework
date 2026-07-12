@@ -266,6 +266,56 @@ TEST(BattleGridPhysicsTest, DynamicBodyAppliesSolvedTransform)
     EXPECT_DOUBLE_EQ(positions.at(player.name())[0], (*solved)[0]);
 }
 
+TEST(BattleGridPhysicsTest, RegistersPeopleAsCapsulesAndSurfaceVehiclesAsHullBoxes)
+{
+    BattleGridWorld world;
+    world.loadMap(TerrainMap(16, 16, TerrainType::Land));
+    InputMap input;
+    world.populate(input);
+
+    const Soldier& player = world.playerSoldier();
+    const auto* playerBody = world.physicsWorld().body(player.name());
+    ASSERT_NE(playerBody, nullptr);
+    EXPECT_EQ(playerBody->shape, grid::physics::CollisionShape::Capsule);
+    EXPECT_DOUBLE_EQ(playerBody->radius, Soldier::kCollisionRadius);
+    EXPECT_DOUBLE_EQ(playerBody->capsuleHeight, 1.8);
+    EXPECT_DOUBLE_EQ(playerBody->position[1], player.location()[1] + 0.9);
+    EXPECT_TRUE(playerBody->lockRotation);
+
+    const grid::physics::CollisionBody* landBody = nullptr;
+    const grid::physics::CollisionBody* seaBody = nullptr;
+    const grid::physics::CollisionBody* airBody = nullptr;
+    const AirVehicle* airVehicle = nullptr;
+    for (const auto& agent : world.getAllAgents()) {
+        if (dynamic_cast<LandVehicle*>(agent.get())) {
+            landBody = world.physicsWorld().body(agent->name());
+        } else if (dynamic_cast<SeaVehicle*>(agent.get())) {
+            seaBody = world.physicsWorld().body(agent->name());
+        } else if (auto* air = dynamic_cast<AirVehicle*>(agent.get())) {
+            airBody = world.physicsWorld().body(agent->name());
+            airVehicle = air;
+        }
+    }
+
+    ASSERT_NE(landBody, nullptr);
+    EXPECT_EQ(landBody->shape, grid::physics::CollisionShape::Box);
+    EXPECT_EQ(landBody->boxHalfExtents, (grid::physics::Vec3{0.6, 0.4, 1.1}));
+    EXPECT_DOUBLE_EQ(landBody->position[1], 0.4);
+    EXPECT_TRUE(landBody->lockRotation);
+    EXPECT_FALSE(landBody->lockYawRotation);
+
+    ASSERT_NE(seaBody, nullptr);
+    EXPECT_EQ(seaBody->shape, grid::physics::CollisionShape::Box);
+    EXPECT_EQ(seaBody->boxHalfExtents, (grid::physics::Vec3{0.4, 0.3, 1.0}));
+    EXPECT_TRUE(seaBody->lockRotation);
+    EXPECT_FALSE(seaBody->lockYawRotation);
+
+    ASSERT_NE(airBody, nullptr);
+    ASSERT_NE(airVehicle, nullptr);
+    EXPECT_EQ(airBody->shape, grid::physics::CollisionShape::Sphere);
+    EXPECT_DOUBLE_EQ(airBody->position[1], airVehicle->location()[1]);
+}
+
 TEST(BattleGridPhysicsTest, MountedDriverUsesVehicleTransformUntilDismount)
 {
     BattleGridWorld world;

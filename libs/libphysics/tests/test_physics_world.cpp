@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 #include <string>
 
 using grid::physics::PhysicsWorld;
@@ -27,6 +28,7 @@ TEST(PhysicsWorldTest, AddAndRemoveBody)
     pw.addBody(b);
     EXPECT_EQ(pw.bodyCount(), 1u);
     EXPECT_NE(pw.body("A"), nullptr);
+    EXPECT_EQ(pw.body("A")->shape, grid::physics::CollisionShape::Sphere);
 
     pw.removeBody("A");
     EXPECT_EQ(pw.bodyCount(), 0u);
@@ -111,6 +113,36 @@ TEST(PhysicsWorldTest, DynamicBodyAdvancesFromSimulatedVelocity)
     EXPECT_FALSE(pw.simulatedBodyVelocity("missing").has_value());
 }
 
+TEST(PhysicsWorldTest, SettingHullYawPreservesPositionAndVelocity)
+{
+    PhysicsWorld pw;
+    CollisionBody hull;
+    hull.name = "hull";
+    hull.position = {3.25, 0.4, -2.5};
+    hull.mass = 2000.0;
+    hull.shape = grid::physics::CollisionShape::Box;
+    hull.boxHalfExtents = {0.6, 0.4, 1.1};
+    hull.motion = grid::physics::BodyMotion::Dynamic;
+    hull.lockRotation = true;
+    hull.lockYawRotation = false;
+    pw.addBody(hull);
+    pw.setSimulatedBodyVelocity(hull.name, {4.0, 0.0, -1.5});
+
+    EXPECT_TRUE(pw.setSimulatedBodyYaw(hull.name, 1.5707963267948966));
+    const auto position = pw.simulatedBodyPosition(hull.name);
+    const auto velocity = pw.simulatedBodyVelocity(hull.name);
+    ASSERT_TRUE(position.has_value());
+    ASSERT_TRUE(velocity.has_value());
+    EXPECT_NEAR((*position)[0], hull.position[0], 1e-6);
+    EXPECT_NEAR((*position)[1], hull.position[1], 1e-6);
+    EXPECT_NEAR((*position)[2], hull.position[2], 1e-6);
+    EXPECT_DOUBLE_EQ((*velocity)[0], 4.0);
+    EXPECT_DOUBLE_EQ((*velocity)[1], 0.0);
+    EXPECT_DOUBLE_EQ((*velocity)[2], -1.5);
+    EXPECT_FALSE(pw.setSimulatedBodyYaw("missing", 0.0));
+    EXPECT_FALSE(pw.setSimulatedBodyYaw(hull.name, std::numeric_limits<double>::infinity()));
+}
+
 TEST(PhysicsWorldTest, DynamicBodyDoesNotPassThroughStaticBox)
 {
     PhysicsWorld pw(1.0 / 60.0);
@@ -131,6 +163,72 @@ TEST(PhysicsWorldTest, DynamicBodyDoesNotPassThroughStaticBox)
     auto position = pw.simulatedBodyPosition("dynamic");
     ASSERT_TRUE(position.has_value());
     EXPECT_LT((*position)[0], 1.1);
+}
+
+TEST(PhysicsWorldTest, UprightCapsuleRestsAtItsFootPosition)
+{
+    PhysicsWorld pw(1.0 / 60.0);
+    pw.setMaxSubSteps(0);
+    pw.setGravity({0.0, -10.0, 0.0});
+    pw.addStaticBox("ground", {0.0, -0.5, 0.0}, {10.0, 0.5, 10.0});
+
+    CollisionBody person;
+    person.name = "person";
+    person.position = {0.0, 3.0, 0.0};
+    person.mass = 80.0;
+    person.radius = 0.4;
+    person.shape = grid::physics::CollisionShape::Capsule;
+    person.capsuleHeight = 1.8;
+    person.motion = grid::physics::BodyMotion::Dynamic;
+    person.gravityScale = 1.0;
+    person.lockRotation = true;
+    pw.addBody(person);
+
+    pw.step(1.0);
+
+    const auto position = pw.simulatedBodyPosition("person");
+    ASSERT_TRUE(position.has_value());
+    EXPECT_NEAR((*position)[1], 0.9, 0.03);
+}
+
+TEST(PhysicsWorldTest, LowBoxHullPushesUprightCapsule)
+{
+    PhysicsWorld pw(1.0 / 60.0);
+    pw.setMaxSubSteps(0);
+
+    CollisionBody vehicle;
+    vehicle.name = "vehicle";
+    vehicle.position = {0.0, 0.4, 0.0};
+    vehicle.mass = 2000.0;
+    vehicle.shape = grid::physics::CollisionShape::Box;
+    vehicle.boxHalfExtents = {0.6, 0.4, 1.1};
+    vehicle.motion = grid::physics::BodyMotion::Dynamic;
+    vehicle.lockVerticalMotion = true;
+    vehicle.lockRotation = true;
+
+    CollisionBody person;
+    person.name = "person";
+    person.position = {3.0, 0.9, 0.0};
+    person.mass = 80.0;
+    person.radius = 0.4;
+    person.shape = grid::physics::CollisionShape::Capsule;
+    person.capsuleHeight = 1.8;
+    person.motion = grid::physics::BodyMotion::Dynamic;
+    person.lockRotation = true;
+
+    pw.addBody(vehicle);
+    pw.addBody(person);
+    pw.setSimulatedBodyVelocity("vehicle", {10.0, 0.0, 0.0});
+
+    const auto collisions = pw.step(0.4);
+    EXPECT_TRUE(std::any_of(collisions.begin(), collisions.end(), [](const Collision& collision) {
+        return (collision.nameA == "vehicle" && collision.nameB == "person")
+            || (collision.nameA == "person" && collision.nameB == "vehicle");
+    }));
+
+    const auto position = pw.simulatedBodyPosition("person");
+    ASSERT_TRUE(position.has_value());
+    EXPECT_GT((*position)[0], 3.0);
 }
 
 TEST(PhysicsWorldTest, DynamicBodiesReportBox3DCollisionData)
