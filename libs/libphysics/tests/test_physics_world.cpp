@@ -33,6 +33,19 @@ TEST(PhysicsWorldTest, AddAndRemoveBody)
     EXPECT_EQ(pw.body("A"), nullptr);
 }
 
+TEST(PhysicsWorldTest, AddAndRemoveStaticBox)
+{
+    PhysicsWorld pw;
+    pw.addStaticBox("ground", {0.0, -0.5, 0.0}, {10.0, 0.5, 10.0});
+    EXPECT_EQ(pw.staticBoxCount(), 1u);
+
+    pw.addStaticBox("ground", {0.0, -1.0, 0.0}, {10.0, 1.0, 10.0});
+    EXPECT_EQ(pw.staticBoxCount(), 1u);
+
+    pw.removeStaticBox("ground");
+    EXPECT_EQ(pw.staticBoxCount(), 0u);
+}
+
 TEST(PhysicsWorldTest, UpdateBodyPosition)
 {
     PhysicsWorld pw;

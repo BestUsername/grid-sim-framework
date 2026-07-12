@@ -10,6 +10,7 @@ namespace grid::physics {
 struct PhysicsWorld::Backend {
     b3WorldId world;
     std::unordered_map<std::string, b3BodyId> bodies;
+    std::unordered_map<std::string, b3BodyId> staticBoxes;
 
     Backend()
     {
@@ -64,6 +65,41 @@ struct PhysicsWorld::Backend {
 
         b3DestroyBody(it->second);
         bodies.erase(it);
+    }
+
+    void addStaticBox(const std::string& name, const Vec3& center, const Vec3& halfExtents)
+    {
+        if (const auto existing = staticBoxes.find(name); existing != staticBoxes.end()) {
+            b3DestroyBody(existing->second);
+            staticBoxes.erase(existing);
+        }
+
+        b3BodyDef definition = b3DefaultBodyDef();
+        definition.position = {
+            static_cast<float>(center[0]),
+            static_cast<float>(center[1]),
+            static_cast<float>(center[2])};
+        definition.name = name.c_str();
+
+        b3BodyId bodyId = b3CreateBody(world, &definition);
+        b3ShapeDef shapeDefinition = b3DefaultShapeDef();
+        b3BoxHull box = b3MakeBoxHull(
+            static_cast<float>(halfExtents[0]),
+            static_cast<float>(halfExtents[1]),
+            static_cast<float>(halfExtents[2]));
+        b3CreateHullShape(bodyId, &shapeDefinition, &box.base);
+        staticBoxes.emplace(name, bodyId);
+    }
+
+    void removeStaticBox(const std::string& name)
+    {
+        const auto it = staticBoxes.find(name);
+        if (it == staticBoxes.end()) {
+            return;
+        }
+
+        b3DestroyBody(it->second);
+        staticBoxes.erase(it);
     }
 
     void updatePosition(const std::string& name, const Vec3& position)
@@ -126,6 +162,16 @@ void PhysicsWorld::removeBody(const std::string& name)
     m_backend->removeBody(name);
 }
 
+void PhysicsWorld::addStaticBox(const std::string& name, const Vec3& center, const Vec3& halfExtents)
+{
+    m_backend->addStaticBox(name, center, halfExtents);
+}
+
+void PhysicsWorld::removeStaticBox(const std::string& name)
+{
+    m_backend->removeStaticBox(name);
+}
+
 void PhysicsWorld::updateBodyPosition(const std::string& name,
                                       double x, double y, double z)
 {
@@ -140,6 +186,11 @@ const CollisionBody* PhysicsWorld::body(const std::string& name) const
 {
     auto it = m_bodies.find(name);
     return it != m_bodies.end() ? &it->second : nullptr;
+}
+
+std::size_t PhysicsWorld::staticBoxCount() const
+{
+    return m_backend->staticBoxes.size();
 }
 
 std::optional<Vec3> PhysicsWorld::simulatedBodyPosition(const std::string& name) const

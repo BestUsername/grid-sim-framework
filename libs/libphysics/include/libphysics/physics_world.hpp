@@ -47,6 +47,8 @@ public:
 
     void addBody(const CollisionBody& body);
     void removeBody(const std::string& name);
+    void addStaticBox(const std::string& name, const Vec3& center, const Vec3& halfExtents);
+    void removeStaticBox(const std::string& name);
 
     /// Update a body's position.  Call once per frame before step().
     void updateBodyPosition(const std::string& name,
@@ -62,6 +64,7 @@ public:
     void setSimulatedBodyVelocity(const std::string& name, const Vec3& velocity);
 
     std::size_t bodyCount() const { return m_bodies.size(); }
+    std::size_t staticBoxCount() const;
 
     // ── Simulation ──────────────────────────────────────────────────
 
