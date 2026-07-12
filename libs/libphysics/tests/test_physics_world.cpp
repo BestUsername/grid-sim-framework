@@ -107,6 +107,28 @@ TEST(PhysicsWorldTest, DynamicBodyAdvancesFromSimulatedVelocity)
     EXPECT_GT((*position)[0], 0.0);
 }
 
+TEST(PhysicsWorldTest, DynamicBodyDoesNotPassThroughStaticBox)
+{
+    PhysicsWorld pw(1.0 / 60.0);
+    pw.addStaticBox("wall", {2.0, 0.0, 0.0}, {0.5, 2.0, 2.0});
+
+    CollisionBody b;
+    b.name = "dynamic";
+    b.mass = 10.0;
+    b.radius = 0.5;
+    b.motion = grid::physics::BodyMotion::Dynamic;
+    pw.addBody(b);
+    pw.setSimulatedBodyVelocity("dynamic", {10.0, 0.0, 0.0});
+
+    for (int i = 0; i < 30; ++i) {
+        pw.step(1.0 / 60.0);
+    }
+
+    auto position = pw.simulatedBodyPosition("dynamic");
+    ASSERT_TRUE(position.has_value());
+    EXPECT_LT((*position)[0], 1.1);
+}
+
 TEST(PhysicsWorldTest, UpdatePreservesPreviousPosition)
 {
     PhysicsWorld pw;
