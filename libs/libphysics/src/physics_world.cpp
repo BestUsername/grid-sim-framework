@@ -147,6 +147,17 @@ struct PhysicsWorld::Backend {
         }
     }
 
+    std::optional<Vec3> velocity(const std::string& name) const
+    {
+        const auto it = bodies.find(name);
+        if (it == bodies.end()) {
+            return std::nullopt;
+        }
+
+        const b3Vec3 velocity = b3Body_GetLinearVelocity(it->second);
+        return Vec3{velocity.x, velocity.y, velocity.z};
+    }
+
     std::optional<std::string> nameForShape(b3ShapeId shapeId) const
     {
         for (const auto& [name, candidate] : shapes) {
@@ -226,6 +237,11 @@ std::optional<Vec3> PhysicsWorld::simulatedBodyPosition(const std::string& name)
 void PhysicsWorld::setSimulatedBodyVelocity(const std::string& name, const Vec3& velocity)
 {
     m_backend->setVelocity(name, velocity);
+}
+
+std::optional<Vec3> PhysicsWorld::simulatedBodyVelocity(const std::string& name) const
+{
+    return m_backend->velocity(name);
 }
 
 // ── Simulation ──────────────────────────────────────────────────────

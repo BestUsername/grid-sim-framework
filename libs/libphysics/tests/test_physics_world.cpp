@@ -100,11 +100,15 @@ TEST(PhysicsWorldTest, DynamicBodyAdvancesFromSimulatedVelocity)
     pw.addBody(b);
 
     pw.setSimulatedBodyVelocity("dynamic", {3.0, 0.0, 0.0});
+    auto velocity = pw.simulatedBodyVelocity("dynamic");
+    ASSERT_TRUE(velocity.has_value());
+    EXPECT_DOUBLE_EQ((*velocity)[0], 3.0);
     pw.step(1.0 / 60.0);
 
     auto position = pw.simulatedBodyPosition("dynamic");
     ASSERT_TRUE(position.has_value());
     EXPECT_GT((*position)[0], 0.0);
+    EXPECT_FALSE(pw.simulatedBodyVelocity("missing").has_value());
 }
 
 TEST(PhysicsWorldTest, DynamicBodyDoesNotPassThroughStaticBox)

@@ -63,6 +63,7 @@ public:
 
     /// Set the Box3D velocity for a dynamic body.
     void setSimulatedBodyVelocity(const std::string& name, const Vec3& velocity);
+    std::optional<Vec3> simulatedBodyVelocity(const std::string& name) const;
 
     std::size_t bodyCount() const { return m_bodies.size(); }
     std::size_t staticBoxCount() const;
