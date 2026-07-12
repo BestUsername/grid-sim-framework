@@ -147,6 +147,7 @@ Explain what and why, not how.
 - **libsim:**     80% line coverage, 80% function coverage
 - **libevent:**   80% line coverage, 80% function coverage
 - **libphysics:** 80% line coverage, 80% function coverage
+- **libnet:**     80% line coverage, 80% function coverage
 - **libmap:**     80% line coverage, 80% function coverage
 - **libio:**      50% line coverage, 50% function coverage (due to hardware dependencies)
 
@@ -193,6 +194,7 @@ grid-sim-framework/
 │   ├── libevent/      # Event system (TEvent, EventBus, ThreadEventComponent)
 │   ├── libio/         # I/O abstraction (keyboard, mouse, gamepad)
 │   ├── libphysics/    # Collision detection (PhysicsWorld, KinematicBody)
+│   ├── libnet/        # TCP networking (TcpClient, TcpServer, NetworkBridge)
 │   └── libmap/        # Map system (MapWorld, GeoProjection, AsciiFormat, OsmFormat)
 ├── apps/              # Applications
 │   ├── battlegrid/    # 3D battle simulation (SDL2 + OpenGL)

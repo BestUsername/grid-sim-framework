@@ -48,7 +48,7 @@ IncludeBlocks: Regroup
 IncludeCategories:
   - Regex: '^".*"$'
     Priority: 1
-  - Regex: '^<(libsim|libio|libevent)/'
+  - Regex: '^<(libsim|libio|libevent|libphysics|libmap|libnet)/'
     Priority: 2
   - Regex: '^<.*\.h>'
     Priority: 3

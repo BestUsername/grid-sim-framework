@@ -2,12 +2,21 @@
 #include "battlegrid_world.hpp"
 #include "gl_display.hpp"
 #include "input_map.hpp"
+#include "player_controller.hpp"
+#include "entity_types.hpp"
+#include "terrain.hpp"
 #include "sense_indicator.hpp"
 
+#include "libsim/base_engine.hpp"
 #include "libsim/game_log.hpp"
+#include "libsim/types.hpp"
 #include "libio/input_event.hpp"
 #include "libio/keycodes.hpp"
+#include "libevent/event.hpp"
+#include "libnet/network_bridge.hpp"
+#include "libnet/serializer.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -16,17 +25,392 @@
 #include <cstring>
 #include <ctime>
 #include <iostream>
-#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
-#include <variant>
+#include <unordered_map>
+#include <unordered_set>
 
 using namespace grid::libsim;
 
-namespace {
+enum class NetworkMode { Standalone, Server, Client, Headless, Compute };
 
-void bindDefaultInputs(battlegrid::InputMap& inputMap)
+// ── Server-side remote player state ─────────────────────────────────
+struct RemotePlayer {
+    std::shared_ptr<battlegrid::Soldier> soldier;
+    grid::net::InputSnapshot input;
+    grid::physics::KinematicBody body;
+    double yaw   = 0.0;
+    double pitch  = 0.3;
+    battlegrid::Vehicle* vehicle = nullptr;
+    bool prevInteract = false;
+};
+
+/// Apply an InputSnapshot to a remote soldier (mirrors PlayerController logic).
+static void applyRemoteInput(RemotePlayer& rp, double dt,
+                             const battlegrid::TerrainMap& map,
+                             battlegrid::BattleGridWorld& world,
+                             const PositionSnapshot& positions)
 {
+    auto& soldier = *rp.soldier;
+    auto& in = rp.input;
+
+    // Look
+    rp.yaw   += static_cast<double>(in.lookDeltaX) * 0.003;
+    rp.pitch  -= static_cast<double>(in.lookDeltaY) * 0.003;
+    rp.yaw   += static_cast<double>(in.lookAxisX) * 3.0 * dt;
+    rp.pitch  -= static_cast<double>(in.lookAxisY) * 3.0 * dt;
+    rp.pitch   = std::clamp(rp.pitch, -1.4, 1.4);
+
+    // Edge-triggered interact (mount / dismount)
+    bool interactPressed = in.interact && !rp.prevInteract;
+    rp.prevInteract = in.interact;
+    if (interactPressed) {
+        if (rp.vehicle) {
+            rp.vehicle->dismount();
+            grid::physics::CollisionBody cb;
+            cb.name = soldier.name();
+            cb.position = {soldier.location()[0], soldier.location()[1], soldier.location()[2]};
+            cb.prevPosition = cb.position;
+            cb.mass = battlegrid::Soldier::kMass;
+            cb.radius = battlegrid::Soldier::kCollisionRadius;
+            world.physicsWorld().addBody(cb);
+            rp.vehicle = nullptr;
+            soldier.setSpeedMultiplier(1.0);
+        } else {
+            COORD soldierPos = soldier.location();
+            battlegrid::Vehicle* v = world.findNearestVehicle(soldierPos, 4.0, positions);
+            if (v && !v->hasDriver()) {
+                if (v->mount(&soldier)) {
+                    rp.vehicle = v;
+                    world.physicsWorld().removeBody(soldier.name());
+                }
+            }
+        }
+    }
+
+    // If mounted, move the vehicle instead
+    if (rp.vehicle) {
+        // Vehicle steering uses the same movement logic but at vehicle speed
+        double moveX = static_cast<double>(in.moveX);
+        double moveZ = static_cast<double>(in.moveZ);
+        bool hasMove = std::abs(moveX) > 0.01 || std::abs(moveZ) > 0.01;
+        if (hasMove) {
+            double len = std::sqrt(moveX * moveX + moveZ * moveZ);
+            if (len > 1.0) { moveX /= len; moveZ /= len; }
+            double cosY = std::cos(rp.yaw);
+            double sinY = std::sin(rp.yaw);
+            double worldX = -moveZ * cosY - moveX * sinY;
+            double worldZ = -moveZ * sinY + moveX * cosY;
+            rp.vehicle->setYaw(std::atan2(worldZ, worldX));
+            double speed = rp.vehicle->speed();
+            double step = speed * dt;
+            const COORD& vpos = rp.vehicle->location();
+            double newX = vpos[0] + worldX * step;
+            double newZ = vpos[2] + worldZ * step;
+
+            // Terrain collision check (mirrors Vehicle::moveTowardTarget)
+            auto sample = map.maxTerrainInRadius(newX, newZ,
+                              battlegrid::Vehicle::kCollisionRadius);
+            double heightDelta = sample.height - vpos[1];
+            auto tcr = battlegrid::resolveTerrainCollision(
+                    heightDelta, battlegrid::Vehicle::kMaxStepUp,
+                    speed, battlegrid::Vehicle::kMass,
+                    battlegrid::terrainObstacleStrength(sample.type));
+
+            switch (tcr.outcome) {
+            case battlegrid::TerrainCollisionOutcome::Pass:
+                break;
+            case battlegrid::TerrainCollisionOutcome::SpeedBump:
+                rp.vehicle->takeDamage(tcr.damage);
+                step *= tcr.speedMultiplier;
+                newX = vpos[0] + worldX * step;
+                newZ = vpos[2] + worldZ * step;
+                break;
+            case battlegrid::TerrainCollisionOutcome::CrashThrough:
+                rp.vehicle->takeDamage(tcr.damage);
+                step *= tcr.speedMultiplier;
+                newX = vpos[0] + worldX * step;
+                newZ = vpos[2] + worldZ * step;
+                break;
+            case battlegrid::TerrainCollisionOutcome::HardStop:
+                rp.vehicle->takeDamage(tcr.damage);
+                // Vehicle does not move.
+                return;
+            }
+
+            double newY = map.heightAt(newX, newZ);
+            rp.vehicle->set_location(COORD{newX, newY, newZ});
+        }
+        return;
+    }
+
+    // Movement
+    double moveX = static_cast<double>(in.moveX);
+    double moveZ = static_cast<double>(in.moveZ);
+    bool hasMove = std::abs(moveX) > 0.01 || std::abs(moveZ) > 0.01;
+
+    if (hasMove) {
+        double len = std::sqrt(moveX * moveX + moveZ * moveZ);
+        if (len > 1.0) { moveX /= len; moveZ /= len; }
+        double cosY = std::cos(rp.yaw);
+        double sinY = std::sin(rp.yaw);
+        double worldX = -moveZ * cosY - moveX * sinY;
+        double worldZ = -moveZ * sinY + moveX * cosY;
+        soldier.setYaw(std::atan2(worldZ, worldX));
+
+        double sprintFactor = std::clamp(static_cast<double>(in.sprint), 0.0, 1.0);
+        double speedMul = 1.0 + sprintFactor;
+        soldier.setSpeedMultiplier(speedMul);
+
+        const COORD& pos = soldier.location();
+        double speedFactor = battlegrid::terrainSpeedFactor(
+            map.at(static_cast<size_t>(std::max(0.0, pos[0])),
+                   static_cast<size_t>(std::max(0.0, pos[2]))));
+        double step = soldier.speed() * speedMul * speedFactor * dt;
+
+        double newX = pos[0] + worldX * step;
+        double newZ = pos[2] + worldZ * step;
+        double currentH = map.heightAt(pos[0], pos[2]);
+        bool grounded = rp.body.isGrounded(pos[1], currentH);
+
+        if (in.jump) rp.body.tryJump(pos[1], currentH, 8.0);
+        double newGroundH = map.heightAt(newX, newZ);
+        double newY = rp.body.applyGravity(dt, pos[1], newGroundH, 20.0);
+        soldier.set_location(COORD{newX, newY, newZ});
+    } else {
+        const COORD& pos = soldier.location();
+        double currentH = map.heightAt(pos[0], pos[2]);
+        if (in.jump) rp.body.tryJump(pos[1], currentH, 8.0);
+        double newY = rp.body.applyGravity(dt, pos[1], currentH, 20.0);
+        soldier.set_location(COORD{pos[0], newY, pos[2]});
+    }
+
+    if (in.shout)
+        soldier.communicate(grid::libsim::Senses::Hearing, "Hey! Over here!");
+}
+
+/// Snapshot every agent into a vector of AgentSnapshots for network broadcast.
+static std::vector<grid::net::AgentSnapshot> snapshotAllAgents(
+    const std::vector<std::shared_ptr<I_AGENT>>& agents,
+    const PositionSnapshot& positions)
+{
+    std::vector<grid::net::AgentSnapshot> out;
+    out.reserve(agents.size());
+    for (auto& a : agents) {
+        grid::net::AgentSnapshot snap;
+        snap.name = a->name();
+        auto it = positions.find(a->name());
+        if (it != positions.end()) {
+            snap.position = {it->second[0], it->second[1], it->second[2]};
+        }
+        // Downcast to extract battlegrid-specific fields
+        if (auto* s = dynamic_cast<battlegrid::Soldier*>(a.get())) {
+            snap.health     = s->health();
+            snap.yaw        = s->yaw();
+            snap.entityType = static_cast<uint8_t>(s->entityType());
+            snap.faction    = static_cast<uint8_t>(s->faction());
+            snap.dead       = s->isDead();
+        } else if (auto* v = dynamic_cast<battlegrid::Vehicle*>(a.get())) {
+            snap.health     = v->health();
+            snap.yaw        = v->yaw();
+            snap.entityType = static_cast<uint8_t>(v->entityType());
+            snap.faction    = static_cast<uint8_t>(v->faction());
+            snap.dead       = v->isDead();
+            if (v->hasDriver())
+                snap.driverName = v->driver()->name();
+        } else if (auto* c = dynamic_cast<battlegrid::Civilian*>(a.get())) {
+            snap.health     = c->health();
+            snap.entityType = static_cast<uint8_t>(battlegrid::EntityType::Civilian);
+            snap.dead       = c->isDead();
+        }
+        out.push_back(std::move(snap));
+    }
+    return out;
+}
+
+/// Capture the current InputMap state into an InputSnapshot for the server.
+static grid::net::InputSnapshot buildInputSnapshot(battlegrid::InputMap& inputMap)
+{
+    grid::net::InputSnapshot snap;
+    snap.moveX      = inputMap.axis(battlegrid::GameAction::MoveX);
+    snap.moveZ      = inputMap.axis(battlegrid::GameAction::MoveZ);
+    snap.sprint     = inputMap.axis(battlegrid::GameAction::Sprint);
+    snap.lookDeltaX = inputMap.delta(battlegrid::GameAction::LookX);
+    snap.lookDeltaY = inputMap.delta(battlegrid::GameAction::LookY);
+    snap.zoomDelta  = inputMap.delta(battlegrid::GameAction::Zoom);
+    snap.lookAxisX  = inputMap.axis(battlegrid::GameAction::LookX);
+    snap.lookAxisY  = inputMap.axis(battlegrid::GameAction::LookY);
+    snap.jump         = inputMap.pressed(battlegrid::GameAction::Jump);
+    snap.interact     = inputMap.pressed(battlegrid::GameAction::Interact);
+    snap.shout        = inputMap.pressed(battlegrid::GameAction::Shout);
+    snap.toggleCamera = inputMap.pressed(battlegrid::GameAction::ToggleCamera);
+    return snap;
+}
+
+/// Serialize a TerrainMap into a TerrainData message.
+/// Wire format: [uint16 width] [uint16 height] [width*height chars]
+static grid::net::Message serializeTerrain(const battlegrid::TerrainMap& map) {
+    std::vector<uint8_t> buf;
+    uint16_t w = static_cast<uint16_t>(map.width());
+    uint16_t h = static_cast<uint16_t>(map.height());
+    buf.resize(4 + static_cast<size_t>(w) * h);
+    std::memcpy(buf.data(), &w, 2);
+    std::memcpy(buf.data() + 2, &h, 2);
+    size_t off = 4;
+    for (size_t z = 0; z < h; ++z)
+        for (size_t x = 0; x < w; ++x)
+            buf[off++] = static_cast<uint8_t>(map.at(x, z));
+    return grid::net::Message(grid::net::MessageType::TerrainData, std::move(buf));
+}
+
+/// Deserialize a TerrainData message into a TerrainMap.
+static battlegrid::TerrainMap deserializeTerrain(const grid::net::Message& msg) {
+    const uint8_t* p = msg.payload().data();
+    uint16_t w = 0, h = 0;
+    std::memcpy(&w, p, 2); p += 2;
+    std::memcpy(&h, p, 2); p += 2;
+    battlegrid::TerrainMap map(w, h, battlegrid::TerrainType::Land);
+    for (size_t z = 0; z < h; ++z)
+        for (size_t x = 0; x < w; ++x)
+            map.set(x, z, static_cast<battlegrid::TerrainType>(*p++));
+    return map;
+}
+
+/// Serialize a batch of game log entries.
+/// Wire: [uint16 count] per-entry: [string source][string location][uint8 sense][string message]
+static grid::net::Message serializeGameLogBatch(
+    const std::vector<grid::libsim::LogEntry>& entries,
+    size_t from, size_t to)
+{
+    std::vector<uint8_t> buf;
+    uint16_t count = static_cast<uint16_t>(to - from);
+    buf.resize(2);
+    std::memcpy(buf.data(), &count, 2);
+    for (size_t i = from; i < to; ++i) {
+        grid::net::detail::packString(buf, entries[i].source);
+        grid::net::detail::packString(buf, entries[i].location);
+        grid::net::detail::packUint8(buf, static_cast<uint8_t>(entries[i].sense));
+        grid::net::detail::packString(buf, entries[i].message);
+    }
+    return grid::net::Message(grid::net::MessageType::GameLogBatch, std::move(buf));
+}
+
+/// Deserialize a batch of game log entries.
+struct RemoteLogEntry {
+    std::string source;
+    std::string location;
+    grid::libsim::Senses sense;
+    std::string message;
+};
+
+static std::vector<RemoteLogEntry> deserializeGameLogBatch(
+    const grid::net::Message& msg)
+{
+    const uint8_t* p = msg.payload().data();
+    uint16_t count = 0;
+    std::memcpy(&count, p, 2); p += 2;
+    std::vector<RemoteLogEntry> out(count);
+    for (uint16_t i = 0; i < count; ++i) {
+        out[i].source   = grid::net::detail::unpackString(p);
+        out[i].location = grid::net::detail::unpackString(p);
+        out[i].sense    = static_cast<grid::libsim::Senses>(grid::net::detail::unpackUint8(p));
+        out[i].message  = grid::net::detail::unpackString(p);
+    }
+    return out;
+}
+
+int main(int argc, char** argv)
+{
+    std::srand(static_cast<unsigned>(std::time(nullptr)));
+    // ── Parse arguments ─────────────────────────────────────────────
+    std::string mapPath;
+    NetworkMode networkMode = NetworkMode::Standalone;
+    uint16_t serverPort = 0;
+    std::string clientHost;
+    uint16_t clientPort = 0;
+
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
+            mapPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--server") == 0 && i + 1 < argc) {
+            networkMode = NetworkMode::Server;
+            serverPort = static_cast<uint16_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--headless") == 0 && i + 1 < argc) {
+            networkMode = NetworkMode::Headless;
+            serverPort = static_cast<uint16_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--compute") == 0 && i + 1 < argc) {
+            networkMode = NetworkMode::Compute;
+            std::string hostPort = argv[++i];
+            auto colon = hostPort.rfind(':');
+            if (colon == std::string::npos) {
+                std::cerr << "Invalid --compute format. Use --compute host:port\n";
+                return EXIT_FAILURE;
+            }
+            clientHost = hostPort.substr(0, colon);
+            clientPort = static_cast<uint16_t>(std::atoi(hostPort.substr(colon + 1).c_str()));
+        } else if (std::strcmp(argv[i], "--client") == 0 && i + 1 < argc) {
+            networkMode = NetworkMode::Client;
+            std::string hostPort = argv[++i];
+            auto colon = hostPort.rfind(':');
+            if (colon == std::string::npos) {
+                std::cerr << "Invalid --client format. Use --client host:port\n";
+                return EXIT_FAILURE;
+            }
+            clientHost = hostPort.substr(0, colon);
+            clientPort = static_cast<uint16_t>(std::atoi(hostPort.substr(colon + 1).c_str()));
+        }
+    }
+
+    // ── Create world ────────────────────────────────────────────────
+    battlegrid::BattleGridWorld world;
+
+    if (networkMode == NetworkMode::Client || networkMode == NetworkMode::Compute) {
+        // Client/Compute: load a placeholder terrain; real terrain arrives from server.
+        battlegrid::TerrainMap placeholder(16, 16, battlegrid::TerrainType::Land);
+        world.loadMap(std::move(placeholder));
+    } else if (!mapPath.empty()) {
+        if (!world.loadMap(mapPath)) {
+            return EXIT_FAILURE;
+        }
+    } else {
+        // Generate a default map inline
+        std::cout << "No map specified (use --map <path>). Using built-in default map.\n";
+        battlegrid::TerrainMap defaultMap(64, 64, battlegrid::TerrainType::Land);
+
+        for (size_t z = 0; z < 64; ++z) {
+            for (size_t x = 0; x < 64; ++x) {
+                // River / water along left and top edges
+                if (x < 8 || z < 5) {
+                    defaultMap.set(x, z, battlegrid::TerrainType::Water);
+                }
+                // Mountain range in the bottom-right
+                if (x > 45 && z > 40 && (x + z) > 95) {
+                    defaultMap.set(x, z, battlegrid::TerrainType::Mountain);
+                }
+                // Small lake in center
+                double cx = static_cast<double>(x) - 32.0;
+                double cz = static_cast<double>(z) - 25.0;
+                if (cx * cx + cz * cz < 36.0) {
+                    defaultMap.set(x, z, battlegrid::TerrainType::Water);
+                }
+            }
+        }
+        // Keep the no-argument demo map comparable to maps/default.map: a
+        // half-metre plateau approached from each side by physical ramp tiles.
+        defaultMap.set(20, 19, battlegrid::TerrainType::SlopeSouth);
+        defaultMap.set(19, 20, battlegrid::TerrainType::SlopeEast);
+        defaultMap.set(20, 20, battlegrid::TerrainType::Hill);
+        defaultMap.set(21, 20, battlegrid::TerrainType::SlopeWest);
+        defaultMap.set(20, 21, battlegrid::TerrainType::SlopeNorth);
+
+        world.loadMap(std::move(defaultMap));
+    }
+
+    // ── Configure input mapping ──────────────────────────────────
+    battlegrid::InputMap inputMap;
+
+    // Keyboard: movement
     inputMap.bindKey(io::Key::W,          battlegrid::GameAction::MoveZ,  -1.0f);
     inputMap.bindKey(io::Key::S,          battlegrid::GameAction::MoveZ,   1.0f);
     inputMap.bindKey(io::Key::A,          battlegrid::GameAction::MoveX,  -1.0f);
@@ -34,209 +418,609 @@ void bindDefaultInputs(battlegrid::InputMap& inputMap)
     inputMap.bindKey(io::Key::LeftShift,  battlegrid::GameAction::Sprint,  1.0f);
     inputMap.bindKey(io::Key::RightShift, battlegrid::GameAction::Sprint,  1.0f);
 
+    // Keyboard: actions
     inputMap.bindKey(io::Key::Space, battlegrid::GameAction::Jump);
-    inputMap.bindKey(io::Key::E,     battlegrid::GameAction::Interact);
-    inputMap.bindKey(io::Key::T,     battlegrid::GameAction::Shout);
-    inputMap.bindKey(io::Key::Tab,   battlegrid::GameAction::ToggleCamera);
-    inputMap.bindKey(io::Key::M,     battlegrid::GameAction::ToggleMap);
+    inputMap.bindKey(io::Key::E,   battlegrid::GameAction::Interact);
+    inputMap.bindKey(io::Key::T,   battlegrid::GameAction::Shout);
+    inputMap.bindKey(io::Key::Tab, battlegrid::GameAction::ToggleCamera);
+    inputMap.bindKey(io::Key::M,   battlegrid::GameAction::ToggleMap);
 
+    // Mouse: look + zoom
     inputMap.bindMouseX(battlegrid::GameAction::LookX, 1.0f);
     inputMap.bindMouseY(battlegrid::GameAction::LookY, 1.0f);
     inputMap.bindScrollY(battlegrid::GameAction::Zoom, 0.5f);
 
+    // Gamepad: movement (left stick)
     inputMap.bindAxis(io::GamepadAxis::LeftX, battlegrid::GameAction::MoveX, 1.0f);
     inputMap.bindAxis(io::GamepadAxis::LeftY, battlegrid::GameAction::MoveZ, 1.0f);
+
+    // Gamepad: look (right stick)
     inputMap.bindAxis(io::GamepadAxis::RightX, battlegrid::GameAction::LookX, 1.0f);
     inputMap.bindAxis(io::GamepadAxis::RightY, battlegrid::GameAction::LookY, 1.0f);
+
+    // Gamepad: sprint (left trigger, analog)
     inputMap.bindAxis(io::GamepadAxis::LeftTrigger, battlegrid::GameAction::Sprint, 1.0f);
 
+    // Gamepad: actions
     inputMap.bindButton(io::GamepadButton::B,          battlegrid::GameAction::Jump);
     inputMap.bindButton(io::GamepadButton::A,          battlegrid::GameAction::Interact);
     inputMap.bindButton(io::GamepadButton::Y,          battlegrid::GameAction::Shout);
-    inputMap.bindButton(io::GamepadButton::LeftBumper, battlegrid::GameAction::ToggleCamera);
-    inputMap.bindButton(io::GamepadButton::DPadUp,     battlegrid::GameAction::MoveZ, -1.0f);
-    inputMap.bindButton(io::GamepadButton::DPadDown,   battlegrid::GameAction::MoveZ,  1.0f);
-    inputMap.bindButton(io::GamepadButton::DPadLeft,   battlegrid::GameAction::MoveX, -1.0f);
-    inputMap.bindButton(io::GamepadButton::DPadRight,  battlegrid::GameAction::MoveX,  1.0f);
-}
+    inputMap.bindButton(io::GamepadButton::LeftBumper,  battlegrid::GameAction::ToggleCamera);
 
-battlegrid::TerrainMap makeDefaultMap()
-{
-    battlegrid::TerrainMap map(64, 64, battlegrid::TerrainType::Land);
+    // Gamepad: digital movement (D-pad)
+    inputMap.bindButton(io::GamepadButton::DPadUp,    battlegrid::GameAction::MoveZ, -1.0f);
+    inputMap.bindButton(io::GamepadButton::DPadDown,  battlegrid::GameAction::MoveZ,  1.0f);
+    inputMap.bindButton(io::GamepadButton::DPadLeft,  battlegrid::GameAction::MoveX, -1.0f);
+    inputMap.bindButton(io::GamepadButton::DPadRight, battlegrid::GameAction::MoveX,  1.0f);
 
-    for (size_t z = 0; z < 64; ++z) {
-        for (size_t x = 0; x < 64; ++x) {
-            if (x < 8 || z < 5) {
-                map.set(x, z, battlegrid::TerrainType::Water);
-            }
-            if (x > 45 && z > 40 && (x + z) > 95) {
-                map.set(x, z, battlegrid::TerrainType::Mountain);
-            }
+    // Compute nodes don't need a local player — agents arrive from server.
+    if (networkMode != NetworkMode::Compute)
+        world.populate(inputMap);
 
-            double cx = static_cast<double>(x) - 32.0;
-            double cz = static_cast<double>(z) - 25.0;
-            if (cx * cx + cz * cz < 36.0) {
-                map.set(x, z, battlegrid::TerrainType::Water);
-            }
+    const bool hasDisplay = (networkMode != NetworkMode::Headless
+                          && networkMode != NetworkMode::Compute);
+    const bool isServerLike = (networkMode == NetworkMode::Server
+                            || networkMode == NetworkMode::Headless);
+
+    // ── Announce network mode ───────────────────────────────────────
+    switch (networkMode) {
+    case NetworkMode::Server:
+        std::cout << "Starting in SERVER mode on port " << serverPort << "\n";
+        break;
+    case NetworkMode::Headless:
+        std::cout << "Starting in HEADLESS server mode on port " << serverPort << "\n";
+        break;
+    case NetworkMode::Client:
+        std::cout << "Starting in CLIENT mode, connecting to "
+                  << clientHost << ":" << clientPort << "\n";
+        break;
+    case NetworkMode::Compute:
+        std::cout << "Starting in COMPUTE node mode, connecting to "
+                  << clientHost << ":" << clientPort << "\n";
+        break;
+    default:
+        std::cout << "Starting in standalone mode.\n";
+        break;
+    }
+
+    // ── Network setup (server / headless mode) ────────────────────
+    grid::net::NetworkBridge bridge;
+    std::mutex remotesMtx;
+    std::unordered_map<grid::net::Session*, RemotePlayer> remotePlayers;
+    // Pending connections handled on the game-loop thread
+    std::mutex pendingMtx;
+    std::vector<std::shared_ptr<grid::net::Session>> pendingConnects;
+    std::vector<grid::net::Session*> pendingDisconnects;
+    std::atomic<int> nextClientId{1};
+
+    // Compute-node tracking (server side)
+    struct ComputeNode {
+        std::shared_ptr<grid::net::Session> session;
+        std::vector<std::string> ownedAgents;
+    };
+    std::mutex computeMtx;
+    std::unordered_map<grid::net::Session*, ComputeNode> computeNodes;
+    std::vector<std::shared_ptr<grid::net::Session>> pendingComputeNodes;
+    // Latest position data received from compute nodes
+    std::mutex computePosMtx;
+    std::unordered_map<std::string, COORD> computePositions;
+
+    if (isServerLike) {
+        bridge.hostServer(
+            serverPort,
+            // Per-session message handler (runs on IO thread)
+            [&](std::shared_ptr<grid::net::Session> session, grid::net::Message msg) {
+                if (msg.type() == grid::net::MessageType::InputEvent &&
+                    msg.payload().size() > 3) {
+                    auto input = grid::net::deserializeInputSnapshot(msg);
+                    std::lock_guard<std::mutex> lk(remotesMtx);
+                    auto it = remotePlayers.find(session.get());
+                    if (it != remotePlayers.end())
+                        it->second.input = input;
+                } else if (msg.type() == grid::net::MessageType::ComputeRegister) {
+                    std::lock_guard<std::mutex> lk(pendingMtx);
+                    pendingComputeNodes.push_back(session);
+                } else if (msg.type() == grid::net::MessageType::AgentState) {
+                    // Position updates from a compute node
+                    auto snaps = grid::net::deserializeAgentStates(msg);
+                    std::lock_guard<std::mutex> lk(computePosMtx);
+                    for (auto& s : snaps) {
+                        computePositions[s.name] = COORD{s.position[0], s.position[1], s.position[2]};
+                    }
+                }
+            },
+            // Connect handler
+            [&](std::shared_ptr<grid::net::Session> session) {
+                std::lock_guard<std::mutex> lk(pendingMtx);
+                pendingConnects.push_back(session);
+            },
+            // Disconnect handler
+            [&](std::shared_ptr<grid::net::Session> session) {
+                std::lock_guard<std::mutex> lk(pendingMtx);
+                pendingDisconnects.push_back(session.get());
+            });
+    }
+
+    // ── Network setup (client mode) ─────────────────────────────────
+    std::mutex clientSnapshotMtx;
+    std::vector<grid::net::AgentSnapshot> clientSnapshots;
+    std::string myPlayerName;  // assigned by server
+    std::atomic<bool> playerAssigned{false};
+    std::mutex terrainMtx;
+    std::unique_ptr<battlegrid::TerrainMap> receivedTerrain;
+    std::atomic<bool> terrainReceived{false};
+    std::mutex clientLogMtx;
+    std::vector<RemoteLogEntry> pendingLogEntries;
+
+    // Compute-node client state
+    std::mutex assignmentMtx;
+    std::vector<grid::net::AgentSnapshot> pendingAssignments;
+    std::atomic<bool> assignmentsReceived{false};
+
+    if (networkMode == NetworkMode::Client) {
+        bridge.connectToServer(clientHost, clientPort,
+            [&](grid::net::Message msg) {
+                if (msg.type() == grid::net::MessageType::AgentState) {
+                    auto snaps = grid::net::deserializeAgentStates(msg);
+                    std::lock_guard<std::mutex> lk(clientSnapshotMtx);
+                    clientSnapshots = std::move(snaps);
+                } else if (msg.type() == grid::net::MessageType::BusEvent) {
+                    myPlayerName = grid::net::deserializePlayerAssignment(msg);
+                    playerAssigned = true;
+                    std::cout << "Assigned soldier: " << myPlayerName << "\n";
+                } else if (msg.type() == grid::net::MessageType::TerrainData) {
+                    std::lock_guard<std::mutex> lk(terrainMtx);
+                    receivedTerrain = std::make_unique<battlegrid::TerrainMap>(
+                        deserializeTerrain(msg));
+                    terrainReceived = true;
+                    std::cout << "Received terrain from server.\n";
+                } else if (msg.type() == grid::net::MessageType::GameLogBatch) {
+                    auto entries = deserializeGameLogBatch(msg);
+                    std::lock_guard<std::mutex> lk(clientLogMtx);
+                    pendingLogEntries.insert(pendingLogEntries.end(),
+                        std::make_move_iterator(entries.begin()),
+                        std::make_move_iterator(entries.end()));
+                }
+            });
+
+        // Wait for terrain data before creating the display
+        std::cout << "Waiting for server terrain data...\n";
+        while (!terrainReceived) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        {
+            std::lock_guard<std::mutex> lk(terrainMtx);
+            world.loadMap(std::move(*receivedTerrain));
         }
     }
 
-    // Keep the no-argument demo map comparable to maps/default.map: a
-    // half-metre plateau approached from each side by physical ramp tiles.
-    map.set(20, 19, battlegrid::TerrainType::SlopeSouth);
-    map.set(19, 20, battlegrid::TerrainType::SlopeEast);
-    map.set(20, 20, battlegrid::TerrainType::Hill);
-    map.set(21, 20, battlegrid::TerrainType::SlopeWest);
-    map.set(20, 21, battlegrid::TerrainType::SlopeNorth);
+    // ── Network setup (compute node mode) ───────────────────────────
+    if (networkMode == NetworkMode::Compute) {
+        bridge.connectToServer(clientHost, clientPort,
+            [&](grid::net::Message msg) {
+                if (msg.type() == grid::net::MessageType::TerrainData) {
+                    std::lock_guard<std::mutex> lk(terrainMtx);
+                    receivedTerrain = std::make_unique<battlegrid::TerrainMap>(
+                        deserializeTerrain(msg));
+                    terrainReceived = true;
+                    std::cout << "[Compute] Received terrain from server.\n";
+                } else if (msg.type() == grid::net::MessageType::AgentAssignment) {
+                    auto snaps = grid::net::deserializeAgentAssignment(msg);
+                    std::lock_guard<std::mutex> lk(assignmentMtx);
+                    pendingAssignments = std::move(snaps);
+                    assignmentsReceived = true;
+                    std::cout << "[Compute] Received " << pendingAssignments.size()
+                              << " agent assignments.\n";
+                }
+            });
 
-    return map;
-}
+        // Identify ourselves as a compute node
+        bridge.sendToServer(grid::net::serializeComputeRegister());
 
-void printUsage(const char* argv0)
-{
-    std::cout << "Usage: " << argv0 << " [--map path/to/map.map]\n";
-}
-
-} // namespace
-
-int main(int argc, char** argv)
-{
-    std::srand(static_cast<unsigned>(std::time(nullptr)));
-
-    std::string mapPath;
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
-            mapPath = argv[++i];
-        } else if (std::strcmp(argv[i], "--help") == 0) {
-            printUsage(argv[0]);
-            return EXIT_SUCCESS;
-        } else {
-            std::cerr << "Unknown argument: " << argv[i] << "\n";
-            printUsage(argv[0]);
-            return EXIT_FAILURE;
+        // Wait for terrain and assignments
+        std::cout << "[Compute] Waiting for server data...\n";
+        while (!terrainReceived || !assignmentsReceived) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        {
+            std::lock_guard<std::mutex> lk(terrainMtx);
+            world.loadMap(std::move(*receivedTerrain));
+        }
+        {
+            std::lock_guard<std::mutex> lk(assignmentMtx);
+            for (auto& snap : pendingAssignments)
+                world.addAgentFromSnapshot(snap);
         }
     }
 
-    battlegrid::BattleGridWorld world;
-    if (!mapPath.empty()) {
-        if (!world.loadMap(mapPath)) {
-            return EXIT_FAILURE;
-        }
-    } else {
-        std::cout << "No map specified (use --map <path>). Using built-in default map.\n";
-        world.loadMap(makeDefaultMap());
-    }
+    // ── Create 3D display (skip for headless / compute) ─────────────
+    std::unique_ptr<battlegrid::GLDisplay> display;
+    if (hasDisplay)
+        display = std::make_unique<battlegrid::GLDisplay>(
+            world.terrainMap(), world.mapWorld(), 1280, 720);
 
-    battlegrid::InputMap inputMap;
-    bindDefaultInputs(inputMap);
-    world.populate(inputMap);
-
-    auto display = std::make_unique<battlegrid::GLDisplay>(
-        world.terrainMap(), world.mapWorld(), 1280, 720);
-
+    // ── Run the simulation engine on a separate thread ──────────────
     std::thread engineThread = world.engine().run();
+    if (networkMode == NetworkMode::Client)
+        world.engine().setState(State::PAUSED);
+
+    // PlayerController is only available when populate() was called.
+    auto* playerCtrlPtr = (networkMode != NetworkMode::Compute)
+        ? &world.playerController() : nullptr;
     auto lastFrame = std::chrono::steady_clock::now();
-    size_t lastLogIndex = 0;
+    size_t lastLogIndex = 0; // track how many log entries we've printed
+    size_t serverLogSentIndex = 0; // server: track how many log entries sent to clients
     battlegrid::SenseIndicatorManager senseIndicators;
 
+    // ── SIGINT handler for headless / compute graceful shutdown ──────
     static std::atomic<bool> g_quit{false};
     std::signal(SIGINT, [](int) { g_quit.store(true); });
 
-    bool running = true;
-    bool showMap = false;
+    // ── Real-time game loop ─────────────────────────────────────────
+    bool running  = true;
+    bool showMap  = false;
     while (running && !g_quit.load()) {
         auto now = std::chrono::steady_clock::now();
         double dt = std::chrono::duration<double>(now - lastFrame).count();
         lastFrame = now;
 
+        // Take a thread-safe position snapshot for this frame
         auto positions = world.engine().snapshotAgentPositions();
 
-        while (auto evt = display->pollEvent()) {
-            if (auto* ke = std::get_if<io::KeyEvent>(&*evt)) {
-                if (ke->key == io::Key::Q && ke->action == io::Action::Press) {
-                    running = false;
-                    break;
+        // ── Server / Headless: handle pending connect / disconnect ───
+        if (isServerLike) {
+            std::lock_guard<std::mutex> lk(pendingMtx);
+
+            // Handle compute node registrations
+            for (auto& s : pendingComputeNodes) {
+                ComputeNode cn;
+                cn.session = s;
+
+                // Send terrain
+                s->send(serializeTerrain(world.terrainMap()));
+
+                // Build assignment: delegate all non-player NPCs
+                std::vector<grid::net::AgentSnapshot> assignments;
+                auto agents = world.engine().getAllAgents();
+                for (auto& a : agents) {
+                    // Skip the local player and remote client soldiers
+                    if (a->name() == "Player") continue;
+                    {
+                        std::lock_guard<std::mutex> rlk(remotesMtx);
+                        bool isClient = false;
+                        for (auto& [sess, rp] : remotePlayers) {
+                            if (rp.soldier->name() == a->name()) { isClient = true; break; }
+                        }
+                        if (isClient) continue;
+                    }
+                    // Skip agents already assigned to another compute node
+                    {
+                        std::lock_guard<std::mutex> clk(computeMtx);
+                        bool alreadyOwned = false;
+                        for (auto& [sess, existing] : computeNodes) {
+                            for (auto& n : existing.ownedAgents) {
+                                if (n == a->name()) { alreadyOwned = true; break; }
+                            }
+                            if (alreadyOwned) break;
+                        }
+                        if (alreadyOwned) continue;
+                    }
+
+                    // Build snapshot for this agent
+                    grid::net::AgentSnapshot snap;
+                    snap.name = a->name();
+                    auto pit = positions.find(a->name());
+                    if (pit != positions.end())
+                        snap.position = {pit->second[0], pit->second[1], pit->second[2]};
+                    if (auto* sol = dynamic_cast<battlegrid::Soldier*>(a.get())) {
+                        snap.health     = sol->health();
+                        snap.yaw        = sol->yaw();
+                        snap.entityType = static_cast<uint8_t>(sol->entityType());
+                        snap.faction    = static_cast<uint8_t>(sol->faction());
+                        snap.dead       = sol->isDead();
+                    } else if (auto* civ = dynamic_cast<battlegrid::Civilian*>(a.get())) {
+                        snap.health     = civ->health();
+                        snap.entityType = static_cast<uint8_t>(battlegrid::EntityType::Civilian);
+                        snap.dead       = civ->isDead();
+                    } else if (auto* veh = dynamic_cast<battlegrid::Vehicle*>(a.get())) {
+                        snap.health     = veh->health();
+                        snap.yaw        = veh->yaw();
+                        snap.entityType = static_cast<uint8_t>(veh->entityType());
+                        snap.faction    = static_cast<uint8_t>(veh->faction());
+                        snap.dead       = veh->isDead();
+                    }
+                    assignments.push_back(snap);
+                    cn.ownedAgents.push_back(a->name());
                 }
-                if (ke->key == io::Key::Escape && ke->action == io::Action::Press) {
-                    running = false;
-                    break;
-                }
-                if (ke->key == io::Key::P && ke->action == io::Action::Press) {
-                    world.engine().setState(
-                        world.engine().getState() == State::RUNNING
-                            ? State::PAUSED
-                            : State::RUNNING);
-                    continue;
+
+                // Mark assigned agents as remote-owned on the server
+                for (auto& name : cn.ownedAgents)
+                    world.setAgentRemoteOwned(name, true);
+
+                s->send(grid::net::serializeAgentAssignment(assignments));
+                std::cout << "Compute node connected, delegated "
+                          << cn.ownedAgents.size() << " agents.\n";
+                {
+                    std::lock_guard<std::mutex> clk(computeMtx);
+                    computeNodes[s.get()] = std::move(cn);
                 }
             }
+            pendingComputeNodes.clear();
 
-            inputMap.processEvent(*evt);
-        }
-
-        if (inputMap.pressed(battlegrid::GameAction::ToggleMap)) {
-            showMap = !showMap;
-        }
-
-        auto& playerCtrl = world.playerController();
-        world.engine().withAgentsLock([&] {
-            playerCtrl.update(dt, positions);
-
-            world.stepCollisions(dt, positions);
-
-            std::string cameraEntity = playerCtrl.inVehicle()
-                ? playerCtrl.currentVehicle()->name()
-                : std::string("Player");
-            auto it = positions.find(cameraEntity);
-            if (it != positions.end()) {
-                playerCtrl.setSnapshotPosition(it->second);
+            // Handle regular client connections
+            for (auto& s : pendingConnects) {
+                // Skip if this is a compute node (already handled above)
+                {
+                    std::lock_guard<std::mutex> clk(computeMtx);
+                    if (computeNodes.count(s.get())) continue;
+                }
+                std::string name = "Client_" + std::to_string(nextClientId++);
+                auto soldier = world.addRemoteSoldier(name);
+                s->send(grid::net::serializePlayerAssignment(name));
+                s->send(serializeTerrain(world.terrainMap()));
+                std::lock_guard<std::mutex> rlk(remotesMtx);
+                remotePlayers[s.get()] = {soldier, {}, {}, 0.0, 0.3};
             }
-        });
+            pendingConnects.clear();
 
-        senseIndicators.update(static_cast<float>(dt));
-
-        auto agents = world.engine().getAllAgents();
-        display->renderFrame(
-            agents,
-            positions,
-            world.engine().getState(),
-            world.engine().getGameLog(),
-            playerCtrl,
-            senseIndicators,
-            showMap);
-
-        auto& log = world.engine().getGameLog();
-        auto entries = log.getEntries();
-        if (entries.size() > lastLogIndex) {
-            COORD playerPos = positions.contains("Player")
-                ? positions.at("Player")
-                : COORD{0.0, 0.0, 0.0};
-            double camYaw = playerCtrl.yaw();
-
-            for (size_t i = lastLogIndex; i < entries.size(); ++i) {
-                std::cout << entries[i].format() << "\n";
-
-                bool isReaction = entries[i].message.rfind("Heard:", 0) == 0;
-                auto it = positions.find(entries[i].source);
-                if (it != positions.end() && !isReaction) {
-                    senseIndicators.addIndicator(it->second, entries[i].sense);
-
-                    double dx = it->second[0] - playerPos[0];
-                    double dz = it->second[2] - playerPos[2];
-                    double distSq = dx * dx + dz * dz;
-                    if (distSq > 1.0 && entries[i].source != "Player") {
-                        double worldAngle = std::atan2(dz, dx);
-                        float bearing = static_cast<float>(worldAngle - camYaw);
-                        senseIndicators.addHudPing(bearing, entries[i].sense);
+            // Handle disconnections
+            for (auto* s : pendingDisconnects) {
+                {
+                    std::lock_guard<std::mutex> rlk(remotesMtx);
+                    remotePlayers.erase(s);
+                }
+                // If it was a compute node, unfreeze its agents
+                {
+                    std::lock_guard<std::mutex> clk(computeMtx);
+                    auto it = computeNodes.find(s);
+                    if (it != computeNodes.end()) {
+                        for (auto& name : it->second.ownedAgents)
+                            world.setAgentRemoteOwned(name, false);
+                        std::cout << "Compute node disconnected, reclaimed "
+                                  << it->second.ownedAgents.size() << " agents.\n";
+                        computeNodes.erase(it);
                     }
                 }
             }
+            pendingDisconnects.clear();
+        }
 
-            lastLogIndex = entries.size();
+        // Drain input events from SDL (only when we have a display)
+        if (display) {
+            while (auto evt = display->pollEvent()) {
+                // Check for quit
+                if (auto* ke = std::get_if<io::KeyEvent>(&*evt)) {
+                    if (ke->key == io::Key::Q && ke->action == io::Action::Press) {
+                        running = false;
+                        break;
+                    }
+                    if (ke->key == io::Key::P && ke->action == io::Action::Press) {
+                        world.engine().setState(
+                            world.engine().getState() == State::RUNNING
+                            ? State::PAUSED : State::RUNNING);
+                        continue;
+                    }
+                    if (ke->key == io::Key::Escape && ke->action == io::Action::Press) {
+                        running = false;
+                        break;
+                    }
+                }
+
+                // Feed all input through the configurable input map
+                inputMap.processEvent(*evt);
+            }
+
+            // Handle map toggle
+            if (inputMap.pressed(battlegrid::GameAction::ToggleMap))
+                showMap = !showMap;
+        }
+
+        // ── Client: send local input to server ─────────────────────
+        if (networkMode == NetworkMode::Client) {
+            auto snap = buildInputSnapshot(inputMap);
+            bridge.sendToServer(grid::net::serializeInputSnapshot(snap));
+
+            // Apply server snapshots to the position map and sync
+            // agent state (yaw, health, etc.).  Creates any agents
+            // that don't exist locally yet (e.g. our assigned soldier
+            // or other connected clients).
+            {
+                std::lock_guard<std::mutex> lk(clientSnapshotMtx);
+                world.updateFromSnapshots(clientSnapshots);
+                for (auto& s : clientSnapshots) {
+                    positions[s.name] = COORD{s.position[0], s.position[1], s.position[2]};
+                }
+            }
+
+            // Update the local camera to follow our assigned soldier
+            if (playerAssigned) {
+                // Mark our soldier as player-controlled once for HUD
+                static bool playerMarked = false;
+                if (!playerMarked) {
+                    for (auto& a : world.engine().getAllAgents()) {
+                        if (a->name() == myPlayerName) {
+                            if (auto* s = dynamic_cast<battlegrid::Soldier*>(a.get()))
+                                s->setPlayerControlled(true);
+                            playerMarked = true;
+                            break;
+                        }
+                    }
+                }
+
+                auto it = positions.find(myPlayerName);
+                if (it != positions.end())
+                    playerCtrlPtr->setSnapshotPosition(it->second);
+            }
+
+            // Process camera look / zoom / mode toggle locally so the
+            // player can rotate the view even though the server owns
+            // movement.  This keeps client-side yaw in sync with the
+            // server (both consume the same deltas).
+            playerCtrlPtr->updateCamera(dt);
+        }
+
+        // ── Compute node: send position updates to server ──────────
+        if (networkMode == NetworkMode::Compute) {
+            auto agents = world.engine().getAllAgents();
+            auto snapshots = snapshotAllAgents(agents, positions);
+            bridge.sendToServer(grid::net::serializeAgentStates(snapshots));
+        }
+
+        // Update player movement and check collisions, both under the
+        // agents lock to serialise with the engine thread.
+        // (In client mode, the server owns the simulation — skip local physics.)
+        // (In compute mode, the engine handles AI; we just need collisions.)
+        if (networkMode != NetworkMode::Client && networkMode != NetworkMode::Compute) {
+            world.engine().withAgentsLock([&] {
+                playerCtrlPtr->update(dt, positions);
+
+                // Refresh the player (and vehicle) position in the snapshot
+                // so collision detection and rendering see the latest location.
+                positions["Player"] = world.playerSoldier().location();
+                if (playerCtrlPtr->inVehicle())
+                    positions[playerCtrlPtr->currentVehicle()->name()] =
+                        playerCtrlPtr->currentVehicle()->location();
+
+                // Set the camera snapshot under the lock so it matches the
+                // positions the renderer will use (no frame-lag from engine ticks
+                // that ran between the snapshot and this lock acquisition).
+                if (hasDisplay) {
+                    std::string entityName = playerCtrlPtr->inVehicle()
+                        ? playerCtrlPtr->currentVehicle()->name() : std::string("Player");
+                    auto it = positions.find(entityName);
+                    if (it != positions.end())
+                        playerCtrlPtr->setSnapshotPosition(it->second);
+                }
+
+                // ── Server / Headless: apply remote client inputs ───────
+                if (isServerLike) {
+                    std::lock_guard<std::mutex> rlk(remotesMtx);
+                    for (auto& [sess, rp] : remotePlayers) {
+                        applyRemoteInput(rp, dt, world.terrainMap(), world, positions);
+                        positions[rp.soldier->name()] = rp.soldier->location();
+                        if (rp.vehicle)
+                            positions[rp.vehicle->name()] = rp.vehicle->location();
+                    }
+                }
+
+                // ── Server / Headless: apply compute node positions ─────
+                if (isServerLike) {
+                    std::lock_guard<std::mutex> lk(computePosMtx);
+                    for (auto& [name, pos] : computePositions) {
+                        positions[name] = pos;
+                        // Also set the agent's actual location
+                        for (auto& a : world.engine().getAllAgents()) {
+                            if (a->name() == name) {
+                                a->set_location(pos);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                world.stepCollisions(dt, positions);
+            });
+        }
+
+        // Compute nodes run their own collision step
+        if (networkMode == NetworkMode::Compute) {
+            world.engine().withAgentsLock([&] {
+                world.stepCollisions(dt, positions);
+            });
+        }
+
+        // Update sense indicators
+        senseIndicators.update(static_cast<float>(dt));
+
+        // Render the 3D scene (only with a display)
+        auto agents = world.engine().getAllAgents();
+        if (display) {
+            display->renderFrame(agents,
+                                positions,
+                                world.engine().getState(),
+                                world.engine().getGameLog(),
+                                *playerCtrlPtr,
+                                senseIndicators,
+                                showMap);
+        }
+
+        // ── Server / Headless: broadcast agent states to clients ────
+        if (isServerLike) {
+            auto snapshots = snapshotAllAgents(agents, positions);
+            bridge.broadcastAgentStates(snapshots);
+
+            // Forward new game log entries to clients
+            auto& serverLog = world.engine().getGameLog();
+            auto serverEntries = serverLog.getEntries();
+            if (serverEntries.size() > serverLogSentIndex) {
+                auto logMsg = serializeGameLogBatch(
+                    serverEntries, serverLogSentIndex, serverEntries.size());
+                bridge.broadcastMessage(logMsg);
+                serverLogSentIndex = serverEntries.size();
+            }
+        }
+
+        // ── Client: inject remote game log entries into local log ────
+        if (networkMode == NetworkMode::Client) {
+            std::lock_guard<std::mutex> lk(clientLogMtx);
+            for (auto& e : pendingLogEntries) {
+                world.engine().getGameLog().log(
+                    e.source, e.location, e.sense, e.message);
+            }
+            pendingLogEntries.clear();
+        }
+
+        // Process new battle log entries: print to console + create indicators
+        if (networkMode != NetworkMode::Compute) {
+            auto& log = world.engine().getGameLog();
+            auto entries = log.getEntries();
+
+            if (entries.size() > lastLogIndex) {
+                COORD playerPos{0.0, 0.0, 0.0};
+                double camYaw = 0.0;
+                if (playerCtrlPtr) {
+                    auto playerIt = positions.find("Player");
+                    playerPos = (playerIt != positions.end())
+                        ? playerIt->second : COORD{0.0, 0.0, 0.0};
+                    camYaw = playerCtrlPtr->yaw();
+                }
+
+                for (size_t i = lastLogIndex; i < entries.size(); ++i) {
+                    std::cout << entries[i].format() << "\n";
+
+                    // Skip reaction entries ("Heard: ...") — only show
+                    // indicators for original communications.
+                    bool isReaction = entries[i].message.rfind("Heard:", 0) == 0;
+
+                    // Create a 3D floating indicator at the source's position
+                    auto it = positions.find(entries[i].source);
+                    if (it != positions.end() && !isReaction) {
+                        senseIndicators.addIndicator(it->second, entries[i].sense);
+
+                        // HUD ping: compute bearing relative to camera
+                        double dx = it->second[0] - playerPos[0];
+                        double dz = it->second[2] - playerPos[2];
+                        double distSq = dx * dx + dz * dz;
+                        if (distSq > 1.0 && entries[i].source != "Player") {
+                            double worldAngle = std::atan2(dz, dx);
+                            float bearing = static_cast<float>(worldAngle - camYaw);
+                            senseIndicators.addHudPing(bearing, entries[i].sense);
+                        }
+                    }
+                }
+                lastLogIndex = entries.size();
+            }
         }
 
         inputMap.endFrame();
+
+        // Headless / Compute: sleep to target ~60 ticks per second
+        if (!hasDisplay) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
     }
 
+    bridge.stop();
     world.engine().stop();
     engineThread.join();
 

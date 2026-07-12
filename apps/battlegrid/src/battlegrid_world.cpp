@@ -314,6 +314,139 @@ void BattleGridWorld::retireDestroyedLandVehicles()
     }
 }
 
+std::shared_ptr<Soldier> BattleGridWorld::addRemoteSoldier(const std::string& name)
+{
+    COORD spawn = findSpawnPoint(TerrainType::Land);
+    auto soldier = std::make_shared<Soldier>(
+        m_engine, spawn, name, Faction::Blue, m_terrain, 6.0, 40.0f);
+    soldier->setPlayerControlled(true);
+    m_engine.addAgent(soldier);
+    m_soldiers.push_back(soldier);
+    registerCollisionBody(name, spawn, Soldier::kMass, Soldier::kCollisionRadius);
+
+    std::cout << "Added remote soldier: " << name << "\n";
+    return soldier;
+}
+
+void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
+{
+    COORD pos{snap.position[0], snap.position[1], snap.position[2]};
+    auto type = static_cast<EntityType>(snap.entityType);
+    auto faction = static_cast<Faction>(snap.faction);
+
+    switch (type) {
+    case EntityType::Soldier: {
+        auto s = std::make_shared<Soldier>(
+            m_engine, pos, snap.name, faction, m_terrain, 4.5);
+        m_engine.addAgent(s);
+        m_soldiers.push_back(s);
+        registerCollisionBody(snap.name, pos, Soldier::kMass, Soldier::kCollisionRadius);
+        break;
+    }
+    case EntityType::Civilian: {
+        auto c = std::make_shared<Civilian>(
+            m_engine, pos, snap.name, m_terrain, 2.5);
+        m_engine.addAgent(c);
+        m_civilians.push_back(c);
+        registerCollisionBody(snap.name, pos, Civilian::kMass, Civilian::kCollisionRadius);
+        break;
+    }
+    case EntityType::LandVehicle: {
+        auto v = std::make_shared<LandVehicle>(
+            m_engine, pos, snap.name, faction, m_terrain, 12.0);
+        m_engine.addAgent(v);
+        m_landVehicles.push_back(v);
+        registerCollisionBody(snap.name, pos, Vehicle::kMass, Vehicle::kCollisionRadius);
+        break;
+    }
+    case EntityType::SeaVehicle: {
+        auto v = std::make_shared<SeaVehicle>(
+            m_engine, pos, snap.name, faction, m_terrain, 14.0);
+        m_engine.addAgent(v);
+        m_seaVehicles.push_back(v);
+        registerCollisionBody(snap.name, pos, Vehicle::kMass, Vehicle::kCollisionRadius);
+        break;
+    }
+    case EntityType::AirVehicle: {
+        auto v = std::make_shared<AirVehicle>(
+            m_engine, pos, snap.name, faction, m_terrain, 22.0, 20.0);
+        m_engine.addAgent(v);
+        m_airVehicles.push_back(v);
+        registerCollisionBody(snap.name, pos, Vehicle::kMass, Vehicle::kCollisionRadius);
+        break;
+    }
+    }
+    std::cout << "Added compute agent: " << snap.name << "\n";
+}
+
+bool BattleGridWorld::setAgentRemoteOwned(const std::string& name, bool owned)
+{
+    for (auto& s : m_soldiers) {
+        if (s->name() == name) { s->setRemoteOwned(owned); return true; }
+    }
+    for (auto& c : m_civilians) {
+        if (c->name() == name) { c->setRemoteOwned(owned); return true; }
+    }
+    for (auto& v : m_landVehicles) {
+        if (v->name() == name) { v->setRemoteOwned(owned); return true; }
+    }
+    for (auto& v : m_seaVehicles) {
+        if (v->name() == name) { v->setRemoteOwned(owned); return true; }
+    }
+    for (auto& v : m_airVehicles) {
+        if (v->name() == name) { v->setRemoteOwned(owned); return true; }
+    }
+    return false;
+}
+
+void BattleGridWorld::updateFromSnapshots(
+    const std::vector<grid::net::AgentSnapshot>& snapshots)
+{
+    for (auto& snap : snapshots) {
+        bool found = false;
+
+        // Try to update existing soldiers
+        for (auto& s : m_soldiers) {
+            if (s->name() == snap.name) {
+                s->setYaw(snap.yaw);
+                s->setHealth(snap.health);
+                found = true;
+                break;
+            }
+        }
+        if (found) continue;
+
+        // Try civilians
+        for (auto& c : m_civilians) {
+            if (c->name() == snap.name) {
+                c->setYaw(snap.yaw);
+                c->setHealth(snap.health);
+                found = true;
+                break;
+            }
+        }
+        if (found) continue;
+
+        // Try vehicles
+        auto updateVehicle = [&](auto& list) -> bool {
+            for (auto& v : list) {
+                if (v->name() == snap.name) {
+                    v->setYaw(snap.yaw);
+                    v->setHealth(snap.health);
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (updateVehicle(m_landVehicles)) continue;
+        if (updateVehicle(m_seaVehicles)) continue;
+        if (updateVehicle(m_airVehicles)) continue;
+
+        // Agent not found locally — create it
+        addAgentFromSnapshot(snap);
+    }
+}
+
 void BattleGridWorld::registerCollisionBody(const std::string& name, const COORD& pos,
                                             double mass, double radius,
                                             grid::physics::CollisionShape shape,

@@ -3,7 +3,7 @@
 ## Overview
 
 Grid Sim Framework is a modular C++ simulation framework composed of reusable
-libraries and a focused application layer built around the `battlegrid` demo and
+libraries and an application layer built around the `battlegrid` sandbox and
 the examples under `apps/demos`.
 
 ```
@@ -16,6 +16,7 @@ the examples under `apps/demos`.
 │ Agents    │ Event      │ Gravity      │ Kbd/Gamepad│ GeoProj.   │
 │ Behaviours│ Pub/Sub    │ Slope checks │            │ OSM/ASCII  │
 └───────────┴────────────┴──────────────┴────────────┴────────────┘
+                              libnet (optional — TCP networking)
 ```
 
 ### Libraries
@@ -26,6 +27,7 @@ the examples under `apps/demos`.
 | **libsim**   | Simulation engine (`BaseEngine`), entity/agent hierarchy (`IEntity → IAgent → BaseAgent`), behaviours, spatial sense events, game log. |
 | **libphysics** | Gravity, jump, slope/wall checks (`KinematicBody`). Designed to grow into a full physics layer (collision resolution, flight dynamics). |
 | **libio**    | Input abstraction — keyboard (console, ncurses, SDL, evdev), gamepad, configurable action mapping (`InputMap`). |
+| **libnet**   | TCP client/server (`TcpClient`, `TcpServer`), `NetworkBridge` for distributing simulation state; binary serialisation helpers. |
 | **libmap**   | Rich geographic map data: `MapLayer<TerrainTile>` grid, `MapWorld` with optional WGS-84 `GeoOrigin`, equirectangular `GeoProjection`, `AsciiMapFormat` (legacy `.map` files), `OsmFormat` (OpenStreetMap XML rasteriser). |
 
 ### Applications
@@ -83,6 +85,16 @@ the code-level map of where each reusable subsystem lives.
 | Kinematic actor movement | `libs/libphysics/include/libphysics/kinematic_body.hpp`, `libs/libphysics/src/kinematic_body.cpp` | Implements gravity, grounded checks, jumping, and terrain step/slope rules for character-like actors. |
 | Fixed-step collision world | `libs/libphysics/include/libphysics/physics_world.hpp`, `libs/libphysics/src/physics_world.cpp` | Owns body registration, broad/narrow phase overlap checks, fixed-timestep stepping, and impulse calculation. |
 | Regression coverage | `libs/libphysics/tests/test_kinematic_body.cpp`, `libs/libphysics/tests/test_physics_world.cpp` | Covers terrain-aware kinematics, collision detection, impulse behavior, fixed-step accumulation, and collision-event cloning. |
+
+### libnet
+
+| Functional area | Primary files | Responsibility |
+|-----------------|---------------|----------------|
+| Wire protocol | `libs/libnet/include/libnet/message.hpp` | Defines the length-prefixed `Message` envelope and the message-type taxonomy shared by clients, servers, and bridges. |
+| Domain serialisation | `libs/libnet/include/libnet/serializer.hpp` | Packs and unpacks agent snapshots, input state, control messages, and assignment payloads onto the wire protocol. |
+| TCP transport | `libs/libnet/include/libnet/tcp_client.hpp`, `libs/libnet/include/libnet/tcp_server.hpp`, `libs/libnet/src/tcp_client.cpp`, `libs/libnet/src/tcp_server.cpp` | Implements asynchronous Boost.Asio client/server transport, session tracking, and queued message I/O with runtime behavior moved out of public headers and into compiled sources. |
+| Simulation bridge | `libs/libnet/include/libnet/network_bridge.hpp`, `libs/libnet/src/network_bridge.cpp` | Wraps the raw transport in a server/client façade tailored to Grid's state-sync and input-forwarding flows while preserving a narrower public API surface. |
+| Regression coverage | `libs/libnet/tests/message_test.cpp`, `libs/libnet/tests/serializer_test.cpp`, `libs/libnet/tests/transport_test.cpp` | Covers the message envelope, serialisation helpers, and transport/bridge lifecycle behavior that sit underneath distributed state sync. |
 
 ### libmap
 

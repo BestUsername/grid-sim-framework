@@ -1,9 +1,9 @@
 # Grid Sim Framework
 
 Grid Sim Framework is a **C++20 agent-based simulation framework** built around
-reusable libraries for simulation, events, input, terrain-aware movement, and
-map import/export. This export is the focused public framework cut of the larger
-workspace, with `battlegrid` kept as the flagship demo application.
+reusable libraries for simulation, events, input, terrain-aware movement,
+networking, and map import/export, with `battlegrid` kept as the flagship demo
+application.
 
 ## Included in this export
 
@@ -13,18 +13,13 @@ workspace, with `battlegrid` kept as the flagship demo application.
 - `libevent` — typed event bus and threaded/poll-based event components
 - `libio` — normalized keyboard, mouse, gamepad, ncurses, SDL, and evdev input
 - `libphysics` — collision events, fixed-step collision world, kinematic bodies
+- `libnet` — TCP transport, state snapshots, player input forwarding, network bridge
 - `libmap` — terrain layers, geographic projection, ASCII maps, OSM import
 
 ### Demo applications
 
 - `apps/battlegrid` — 3D sandbox/demo app for exercising the framework
 - `apps/demos` — focused examples for event and input subsystems
-
-## Not included in the initial public import
-
-`libnet` is intentionally **parked outside this export** and will be brought in
-later on its own branch. This keeps the initial public repo focused on the core
-framework and standalone demos.
 
 ## Features
 
@@ -33,6 +28,7 @@ framework and standalone demos.
 - **Event-driven architecture** for decoupled simulation behavior
 - **Multiple I/O backends** via SDL2, ncurses, and Linux evdev
 - **Terrain-aware movement and collisions**
+- **Distributed simulation support** through optional TCP networking and state sync
 - **Map pipeline** with ASCII maps and OpenStreetMap XML rasterization
 - **Documented and unit-tested libraries**
 
@@ -41,6 +37,7 @@ framework and standalone demos.
 - CMake 3.14+
 - C++20-capable compiler
 - SDL2 development headers
+- Boost.System development headers
 - ncurses development headers
 - `lcov` for coverage reports
 - `doxygen` for API docs
@@ -64,14 +61,14 @@ The public export is shaped by a few architectural rules:
 - **Battle-tested demos** — `battlegrid` and the smaller demos exist to prove
   library integration without becoming hidden framework dependencies
 - **Progressive complexity** — the repo supports simple local simulations first,
-  while leaving room for richer extensions like networking or larger worlds
+  while leaving room for richer extensions like distributed networking or larger worlds
 
 ## Build
 
 ### Dependencies (Ubuntu/Debian)
 
 ```bash
-sudo apt-get install build-essential cmake g++ lcov doxygen libsdl2-dev libncurses-dev
+sudo apt-get install build-essential cmake g++ lcov doxygen libsdl2-dev libncurses-dev libboost-system-dev
 ```
 
 `libmap` fetches `tinyxml2` automatically with CMake if it is not already
@@ -104,6 +101,7 @@ grid-sim-framework/
 │   ├── libevent/
 │   ├── libio/
 │   ├── libmap/
+│   ├── libnet/
 │   ├── libphysics/
 │   └── libsim/
 ├── apps/
@@ -127,6 +125,16 @@ Run the included demo app with the shipped ASCII map:
 
 ```bash
 ./build/bin/battlegrid --map apps/battlegrid/maps/default.map
+```
+
+Distributed modes:
+
+```bash
+./build/bin/battlegrid --server 4000 --map apps/battlegrid/maps/default.map
+./build/bin/battlegrid --client 127.0.0.1:4000
+./build/bin/battlegrid --headless 4000 --map apps/battlegrid/maps/default.map
+./build/bin/battlegrid --compute 127.0.0.1:4000
+./build/bin/demo_net_bridge
 ```
 
 Controls include:

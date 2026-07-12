@@ -14,6 +14,7 @@ libraries and a small set of focused demo applications.
 - **libsim** — simulation engine, agents, behaviours, spatial senses, logs
 - **libio** — SDL, ncurses, and evdev input abstraction
 - **libphysics** — collision bodies and fixed-step physics world
+- **libnet** — TCP transport, message envelopes, and simulation-state serialisation
 - **libmap** — map tiles, projections, ASCII/OSM import, world metadata
 
 ## Functional decomposition

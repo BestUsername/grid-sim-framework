@@ -14,6 +14,8 @@
 #include "libsim/base_engine.hpp"
 #include "libsim/game_log.hpp"
 #include "libphysics/physics_world.hpp"
+#include "libnet/serializer.hpp"
+
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -73,6 +75,19 @@ public:
     /// Transfer a soldier between its own dynamic body and a vehicle seat.
     bool mountSoldier(Soldier& soldier, Vehicle& vehicle);
     void dismountSoldier(Soldier& soldier, Vehicle& vehicle);
+
+    /// Dynamically add a soldier at runtime (e.g. for a remote player).
+    std::shared_ptr<Soldier> addRemoteSoldier(const std::string& name);
+
+    /// Create an agent from a network snapshot definition (for compute nodes).
+    void addAgentFromSnapshot(const grid::net::AgentSnapshot& snap);
+
+    /// Update local agents from server snapshots (client-side sync).
+    /// Creates missing agents and updates yaw/health/dead on existing ones.
+    void updateFromSnapshots(const std::vector<grid::net::AgentSnapshot>& snapshots);
+
+    /// Mark an agent as remote-owned by name.  Returns true if found.
+    bool setAgentRemoteOwned(const std::string& name, bool owned);
 
     /// Access the physics world (e.g. to change simulation mode).
     grid::physics::PhysicsWorld& physicsWorld() { return m_physicsWorld; }

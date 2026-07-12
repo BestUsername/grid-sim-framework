@@ -7,6 +7,12 @@ function(add_demo_executable target_name)
     target_compile_features(${target_name} PRIVATE cxx_std_20)
 endfunction()
 
+find_package(Boost COMPONENTS system)
+if(Boost_FOUND)
+    add_demo_executable(demo_net_bridge demo_net_bridge.cpp)
+    target_link_libraries(demo_net_bridge PRIVATE sim net event Boost::system)
+endif()
+
 set(CURSES_NEED_WIDE TRUE)
 set(CURSES_NEED_NCURSES TRUE)
 find_package(Curses)

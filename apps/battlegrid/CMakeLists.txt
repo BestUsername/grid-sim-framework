@@ -16,7 +16,7 @@ add_executable(battlegrid
 )
 
 target_compile_features(battlegrid PRIVATE cxx_std_20)
-target_link_libraries(battlegrid PRIVATE sim io physics map ${SDL2_LIBRARIES} OpenGL::GL GLEW::GLEW)
+target_link_libraries(battlegrid PRIVATE sim io physics net map ${SDL2_LIBRARIES} OpenGL::GL GLEW::GLEW)
 target_include_directories(battlegrid PRIVATE include ${SDL2_INCLUDE_DIRS})
 
 if(BUILD_TESTING)
