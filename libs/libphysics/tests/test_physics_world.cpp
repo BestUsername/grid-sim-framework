@@ -49,6 +49,29 @@ TEST(PhysicsWorldTest, UpdateBodyPosition)
     EXPECT_DOUBLE_EQ(body->position[2], 3.0);
 }
 
+TEST(PhysicsWorldTest, SimulatedPositionTracksRegisteredBody)
+{
+    PhysicsWorld pw;
+    CollisionBody b;
+    b.name = "A";
+    b.position = {1.0, 2.0, 3.0};
+    pw.addBody(b);
+
+    auto initialPosition = pw.simulatedBodyPosition("A");
+    ASSERT_TRUE(initialPosition.has_value());
+    EXPECT_DOUBLE_EQ((*initialPosition)[0], 1.0);
+    EXPECT_DOUBLE_EQ((*initialPosition)[1], 2.0);
+    EXPECT_DOUBLE_EQ((*initialPosition)[2], 3.0);
+
+    pw.updateBodyPosition("A", 5.0, 1.0, 3.0);
+    auto updatedPosition = pw.simulatedBodyPosition("A");
+    ASSERT_TRUE(updatedPosition.has_value());
+    EXPECT_DOUBLE_EQ((*updatedPosition)[0], 5.0);
+    EXPECT_DOUBLE_EQ((*updatedPosition)[1], 1.0);
+    EXPECT_DOUBLE_EQ((*updatedPosition)[2], 3.0);
+    EXPECT_FALSE(pw.simulatedBodyPosition("missing").has_value());
+}
+
 TEST(PhysicsWorldTest, UpdatePreservesPreviousPosition)
 {
     PhysicsWorld pw;

@@ -73,6 +73,17 @@ struct PhysicsWorld::Backend {
             {static_cast<float>(position[0]), static_cast<float>(position[1]), static_cast<float>(position[2])},
             definition.rotation);
     }
+
+    std::optional<Vec3> position(const std::string& name) const
+    {
+        const auto it = bodies.find(name);
+        if (it == bodies.end()) {
+            return std::nullopt;
+        }
+
+        const b3Pos position = b3Body_GetPosition(it->second);
+        return Vec3{position.x, position.y, position.z};
+    }
 };
 
 PhysicsWorld::PhysicsWorld(double fixedTimestep)
@@ -113,6 +124,11 @@ const CollisionBody* PhysicsWorld::body(const std::string& name) const
 {
     auto it = m_bodies.find(name);
     return it != m_bodies.end() ? &it->second : nullptr;
+}
+
+std::optional<Vec3> PhysicsWorld::simulatedBodyPosition(const std::string& name) const
+{
+    return m_backend->position(name);
 }
 
 // ── Simulation ──────────────────────────────────────────────────────

@@ -5,6 +5,7 @@
 
 #include <string>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -53,6 +54,9 @@ public:
 
     /// Read-only access to a registered body (nullptr if not found).
     const CollisionBody* body(const std::string& name) const;
+
+    /// Read a body's transform from the Box3D simulation world.
+    std::optional<Vec3> simulatedBodyPosition(const std::string& name) const;
 
     std::size_t bodyCount() const { return m_bodies.size(); }
 
