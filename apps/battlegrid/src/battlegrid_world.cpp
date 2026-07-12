@@ -335,7 +335,7 @@ void BattleGridWorld::submitActorVelocities()
     for (const auto& soldier : m_soldiers) {
         submit(soldier);
         if (soldier->consumeJumpRequest()
-            && m_physicsWorld.simulatedBodyTouchesStatic(soldier->name())) {
+            && m_physicsWorld.simulatedBodyGrounded(soldier->name())) {
             const auto horizontal = soldier->movementVelocity();
             m_physicsWorld.setSimulatedBodyVelocity(
                 soldier->name(), {horizontal[0], jumpSpeed, horizontal[2]});
@@ -344,7 +344,7 @@ void BattleGridWorld::submitActorVelocities()
     for (const auto& civilian : m_civilians) {
         submit(civilian);
         if (civilian->consumeJumpRequest()
-            && m_physicsWorld.simulatedBodyTouchesStatic(civilian->name())) {
+            && m_physicsWorld.simulatedBodyGrounded(civilian->name())) {
             const auto horizontal = civilian->movementVelocity();
             m_physicsWorld.setSimulatedBodyVelocity(
                 civilian->name(), {horizontal[0], jumpSpeed, horizontal[2]});
@@ -383,6 +383,14 @@ void BattleGridWorld::applySolvedTransforms(
     for (const auto& vehicle : m_seaVehicles) apply(vehicle, true);
     for (const auto& vehicle : m_airVehicles) apply(vehicle, false);
 
+    auto applyVehicleYaw = [&](const auto& vehicle) {
+        if (const auto yaw = m_physicsWorld.simulatedBodyYaw(vehicle->name())) {
+            vehicle->setPhysicsYaw(*yaw);
+        }
+    };
+    for (const auto& vehicle : m_landVehicles) applyVehicleYaw(vehicle);
+    for (const auto& vehicle : m_seaVehicles) applyVehicleYaw(vehicle);
+
     for (const auto& vehicle : m_landVehicles) {
         if (auto* driver = vehicle->driver()) {
             driver->set_location(vehicle->location());
@@ -411,10 +419,10 @@ void BattleGridWorld::stepCollisions(double dt,
 {
     submitActorVelocities();
     for (const auto& vehicle : m_landVehicles) {
-        m_physicsWorld.setSimulatedBodyYaw(vehicle->name(), vehicle->yaw());
+        m_physicsWorld.setSimulatedBodyYaw(vehicle->name(), vehicle->desiredYaw());
     }
     for (const auto& vehicle : m_seaVehicles) {
-        m_physicsWorld.setSimulatedBodyYaw(vehicle->name(), vehicle->yaw());
+        m_physicsWorld.setSimulatedBodyYaw(vehicle->name(), vehicle->desiredYaw());
     }
     const auto collisions = m_physicsWorld.step(dt);
     applySolvedTransforms(positions);

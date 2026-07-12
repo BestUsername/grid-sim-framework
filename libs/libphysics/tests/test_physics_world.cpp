@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <numbers>
 #include <string>
 
 using grid::physics::PhysicsWorld;
@@ -143,6 +144,46 @@ TEST(PhysicsWorldTest, SettingHullYawPreservesPositionAndVelocity)
     EXPECT_FALSE(pw.setSimulatedBodyYaw(hull.name, std::numeric_limits<double>::infinity()));
 }
 
+TEST(PhysicsWorldTest, SteeringHullYawUsesAngularMotionWithoutTeleporting)
+{
+    PhysicsWorld pw(1.0 / 120.0);
+    CollisionBody hull;
+    hull.name = "hull";
+    hull.mass = 2000.0;
+    hull.shape = grid::physics::CollisionShape::Box;
+    hull.boxHalfExtents = {0.6, 0.4, 1.1};
+    hull.motion = grid::physics::BodyMotion::Dynamic;
+    hull.lockRotation = true;
+    hull.lockYawRotation = false;
+    pw.addBody(hull);
+    pw.setSimulatedBodyVelocity(hull.name, {4.0, 0.0, 0.0});
+
+    ASSERT_TRUE(pw.setSimulatedBodyYaw(hull.name, std::numbers::pi / 2.0));
+    const auto beforeStepYaw = pw.simulatedBodyYaw(hull.name);
+    ASSERT_TRUE(beforeStepYaw.has_value());
+    EXPECT_NEAR(*beforeStepYaw, 0.0, 1e-6);
+
+    pw.step(1.0 / 120.0);
+    const auto firstStepYaw = pw.simulatedBodyYaw(hull.name);
+    ASSERT_TRUE(firstStepYaw.has_value());
+    EXPECT_LT(std::abs(*firstStepYaw), 0.2);
+
+    for (int step = 0; step < 60; ++step) {
+        pw.setSimulatedBodyYaw(hull.name, std::numbers::pi / 2.0);
+        pw.step(1.0 / 120.0);
+    }
+
+    const auto position = pw.simulatedBodyPosition(hull.name);
+    const auto velocity = pw.simulatedBodyVelocity(hull.name);
+    const auto yaw = pw.simulatedBodyYaw(hull.name);
+    ASSERT_TRUE(position.has_value());
+    ASSERT_TRUE(velocity.has_value());
+    ASSERT_TRUE(yaw.has_value());
+    EXPECT_GT((*position)[0], 1.5);
+    EXPECT_NEAR((*velocity)[0], 4.0, 1e-5);
+    EXPECT_NEAR(*yaw, std::numbers::pi / 2.0, 0.02);
+}
+
 TEST(PhysicsWorldTest, DynamicBodyDoesNotPassThroughStaticBox)
 {
     PhysicsWorld pw(1.0 / 60.0);
@@ -189,6 +230,36 @@ TEST(PhysicsWorldTest, UprightCapsuleRestsAtItsFootPosition)
     const auto position = pw.simulatedBodyPosition("person");
     ASSERT_TRUE(position.has_value());
     EXPECT_NEAR((*position)[1], 0.9, 0.03);
+}
+
+TEST(PhysicsWorldTest, GroundedStateUsesUpwardStaticContactsAndJumpGrace)
+{
+    PhysicsWorld pw(1.0 / 120.0);
+    pw.setMaxSubSteps(0);
+    pw.setGravity({0.0, -10.0, 0.0});
+    pw.addStaticBox("ground", {0.0, -0.5, 0.0}, {10.0, 0.5, 10.0});
+
+    CollisionBody person;
+    person.name = "person";
+    person.position = {0.0, 0.9, 0.0};
+    person.mass = 80.0;
+    person.radius = 0.4;
+    person.shape = grid::physics::CollisionShape::Capsule;
+    person.capsuleHeight = 1.8;
+    person.motion = grid::physics::BodyMotion::Dynamic;
+    person.gravityScale = 1.0;
+    person.lockRotation = true;
+    pw.addBody(person);
+
+    pw.step(1.0 / 60.0);
+    EXPECT_TRUE(pw.simulatedBodyGrounded(person.name));
+
+    pw.setSimulatedBodyVelocity(person.name, {3.0, 8.0, 0.0});
+    pw.step(0.05);
+    EXPECT_TRUE(pw.simulatedBodyGrounded(person.name));
+
+    pw.step(0.1);
+    EXPECT_FALSE(pw.simulatedBodyGrounded(person.name));
 }
 
 TEST(PhysicsWorldTest, LowBoxHullPushesUprightCapsule)

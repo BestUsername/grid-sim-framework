@@ -65,9 +65,15 @@ public:
     /// Set the Box3D velocity for a dynamic body.
     void setSimulatedBodyVelocity(const std::string& name, const Vec3& velocity);
     std::optional<Vec3> simulatedBodyVelocity(const std::string& name) const;
-    /// Set an upright body's yaw in radians while preserving its position and velocity.
+    /// Steer an upright body's yaw in radians without teleporting it.
     /// Returns false if the body does not exist or @p yaw is not finite.
     bool setSimulatedBodyYaw(const std::string& name, double yaw);
+    /// Read an upright body's yaw in radians from the Box3D simulation.
+    std::optional<double> simulatedBodyYaw(const std::string& name) const;
+    /// Whether an upward static contact was seen recently enough to jump.
+    /// This includes a brief grace period so input is not coupled to a
+    /// particular fixed-step contact query.
+    bool simulatedBodyGrounded(const std::string& name) const;
     /// Whether the body has a current Box3D contact with static geometry.
     bool simulatedBodyTouchesStatic(const std::string& name) const;
 
@@ -120,6 +126,7 @@ private:
     double m_fixedTimestep;
     double m_accumulator = 0.0;
     double m_frameDt     = 0.0;
+    double m_simulationTime = 0.0;
     double m_restitution = 0.5;
     int    m_maxSubSteps = 8;  // 0 = accuracy mode
 };

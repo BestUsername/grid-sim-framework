@@ -126,7 +126,7 @@ void Vehicle::moveTowardTarget(double dt)
     double nz = dz / dist;
     double effectiveSpeed = std::min(m_speed, dist / std::max(dt, 1e-12));
     m_movementVelocity = {nx * effectiveSpeed, nz * effectiveSpeed};
-    m_yaw = std::atan2(nz, nx);
+    setYaw(std::atan2(nz, nx));
 }
 
 // ── LandVehicle ─────────────────────────────────────────────────────

@@ -4,10 +4,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace grid::physics {
 
 namespace {
+
+constexpr double kGroundNormalThreshold = 0.5;
+constexpr double kGroundGracePeriod = 0.1;
+constexpr double kYawAngularGain = 12.0;
+constexpr double kMaxYawAngularSpeed = 10.0;
 
 double boundingRadius(const CollisionBody& body)
 {
@@ -32,6 +38,7 @@ struct PhysicsWorld::Backend {
     std::unordered_map<std::string, b3BodyId> bodies;
     std::unordered_map<std::string, b3ShapeId> shapes;
     std::unordered_map<std::string, b3BodyId> staticBoxes;
+    std::unordered_map<std::string, double> groundedUntil;
 
     Backend()
     {
@@ -106,6 +113,7 @@ struct PhysicsWorld::Backend {
             b3Body_SetMassData(bodyId, massData);
         }
         bodies.emplace(body.name, bodyId);
+        groundedUntil.erase(body.name);
     }
 
     void removeBody(const std::string& name)
@@ -118,6 +126,7 @@ struct PhysicsWorld::Backend {
         b3DestroyBody(it->second);
         bodies.erase(it);
         shapes.erase(name);
+        groundedUntil.erase(name);
     }
 
     void addStaticBox(const std::string& name, const Vec3& center, const Vec3& halfExtents)
@@ -216,13 +225,80 @@ struct PhysicsWorld::Backend {
             return false;
         }
 
-        const b3Pos position = b3Body_GetPosition(it->second);
-        const b3Vec3 velocity = b3Body_GetLinearVelocity(it->second);
-        const b3Quat rotation = b3MakeQuatFromAxisAngle(
-            {0.0f, 1.0f, 0.0f}, static_cast<float>(yaw));
-        b3Body_SetTransform(it->second, position, rotation);
-        b3Body_SetLinearVelocity(it->second, velocity);
+        const b3Quat rotation = b3Body_GetRotation(it->second);
+        const double currentYaw = std::atan2(
+            2.0 * (rotation.s * rotation.v.y + rotation.v.x * rotation.v.z),
+            1.0 - 2.0 * (rotation.v.y * rotation.v.y + rotation.v.x * rotation.v.x));
+        const double yawError = std::remainder(yaw - currentYaw, 2.0 * std::numbers::pi);
+        const double angularVelocity = std::clamp(
+            yawError * kYawAngularGain, -kMaxYawAngularSpeed, kMaxYawAngularSpeed);
+        b3Body_SetAngularVelocity(it->second, {0.0f, static_cast<float>(angularVelocity), 0.0f});
         return true;
+    }
+
+    std::optional<double> yaw(const std::string& name) const
+    {
+        const auto it = bodies.find(name);
+        if (it == bodies.end()) {
+            return std::nullopt;
+        }
+
+        const b3Quat rotation = b3Body_GetRotation(it->second);
+        return std::atan2(
+            2.0 * (rotation.s * rotation.v.y + rotation.v.x * rotation.v.z),
+            1.0 - 2.0 * (rotation.v.y * rotation.v.y + rotation.v.x * rotation.v.x));
+    }
+
+    bool contactsStaticGround(const std::string& name) const
+    {
+        const auto bodyIt = bodies.find(name);
+        const auto shapeIt = shapes.find(name);
+        if (bodyIt == bodies.end() || shapeIt == shapes.end()) {
+            return false;
+        }
+
+        const int capacity = b3Body_GetContactCapacity(bodyIt->second);
+        if (capacity == 0) {
+            return false;
+        }
+        std::vector<b3ContactData> contacts(static_cast<size_t>(capacity));
+        const int count = b3Body_GetContactData(bodyIt->second, contacts.data(), capacity);
+        for (int index = 0; index < count; ++index) {
+            const auto& contact = contacts[index];
+            const bool bodyIsA = B3_ID_EQUALS(contact.shapeIdA, shapeIt->second);
+            const b3ShapeId otherShape = bodyIsA ? contact.shapeIdB : contact.shapeIdA;
+            const b3BodyId otherBody = b3Shape_GetBody(otherShape);
+            const bool isStatic = std::any_of(
+                staticBoxes.begin(), staticBoxes.end(), [&](const auto& staticBox) {
+                    return B3_ID_EQUALS(otherBody, staticBox.second);
+                });
+            if (!isStatic) {
+                continue;
+            }
+            for (int manifoldIndex = 0; manifoldIndex < contact.manifoldCount; ++manifoldIndex) {
+                const auto& normal = contact.manifolds[manifoldIndex].normal;
+                const double upwardNormal = bodyIsA ? -normal.y : normal.y;
+                if (upwardNormal >= kGroundNormalThreshold) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    void updateGrounded(double simulationTime)
+    {
+        for (const auto& [name, bodyId] : bodies) {
+            if (contactsStaticGround(name)) {
+                groundedUntil[name] = simulationTime + kGroundGracePeriod;
+            }
+        }
+    }
+
+    bool grounded(const std::string& name, double simulationTime) const
+    {
+        const auto it = groundedUntil.find(name);
+        return it != groundedUntil.end() && it->second >= simulationTime;
     }
 
     bool touchesStatic(const std::string& name) const
@@ -344,6 +420,16 @@ bool PhysicsWorld::setSimulatedBodyYaw(const std::string& name, double yaw)
     return m_backend->setYaw(name, yaw);
 }
 
+std::optional<double> PhysicsWorld::simulatedBodyYaw(const std::string& name) const
+{
+    return m_backend->yaw(name);
+}
+
+bool PhysicsWorld::simulatedBodyGrounded(const std::string& name) const
+{
+    return m_backend->grounded(name, m_simulationTime);
+}
+
 bool PhysicsWorld::simulatedBodyTouchesStatic(const std::string& name) const
 {
     return m_backend->touchesStatic(name);
@@ -393,6 +479,8 @@ std::vector<Collision> PhysicsWorld::step(double dt)
 void PhysicsWorld::subStep(double dt, std::vector<Collision>& out)
 {
     b3World_Step(m_backend->world, static_cast<float>(dt), 4);
+    m_simulationTime += dt;
+    m_backend->updateGrounded(m_simulationTime);
 
     const b3ContactEvents events = b3World_GetContactEvents(m_backend->world);
     bool hasDynamicBodies = false;

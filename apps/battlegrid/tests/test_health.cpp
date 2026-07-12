@@ -266,6 +266,30 @@ TEST(BattleGridPhysicsTest, DynamicBodyAppliesSolvedTransform)
     EXPECT_DOUBLE_EQ(positions.at(player.name())[0], (*solved)[0]);
 }
 
+TEST(BattleGridPhysicsTest, GroundedPlayerCanJumpWhileMoving)
+{
+    BattleGridWorld world;
+    world.loadMap(TerrainMap(16, 16, TerrainType::Land));
+    InputMap input;
+    world.populate(input);
+    world.physicsWorld().setMaxSubSteps(0);
+
+    Soldier& player = world.playerSoldier();
+    auto positions = world.engine().snapshotAgentPositions();
+    world.stepCollisions(1.0 / 60.0, positions);
+    ASSERT_TRUE(world.physicsWorld().simulatedBodyGrounded(player.name()));
+
+    const double startX = player.location()[0];
+    player.setMovementVelocity(6.0, 0.0);
+    player.jump();
+    world.stepCollisions(1.0 / 60.0, positions);
+
+    const auto velocity = world.physicsWorld().simulatedBodyVelocity(player.name());
+    ASSERT_TRUE(velocity.has_value());
+    EXPECT_GT((*velocity)[1], 7.0);
+    EXPECT_GT(player.location()[0], startX);
+}
+
 TEST(BattleGridPhysicsTest, RegistersPeopleAsCapsulesAndSurfaceVehiclesAsHullBoxes)
 {
     BattleGridWorld world;

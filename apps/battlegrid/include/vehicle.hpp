@@ -33,7 +33,9 @@ public:
     EntityType  entityType()  const { return m_vehicleType; }
     double      speed()       const { return m_speed; }
     double      yaw()         const { return m_yaw; }
-    void        setYaw(double yaw) { m_yaw = yaw; }
+    double      desiredYaw()  const { return m_desiredYaw; }
+    void        setYaw(double yaw) { m_desiredYaw = yaw; }
+    void        setPhysicsYaw(double yaw) { m_yaw = yaw; }
 
     void setMoveTarget(const COORD& target);
     void clearMoveTarget();
@@ -75,6 +77,7 @@ protected:
     bool              m_hasTarget = false;
     COORD             m_target{0.0, 0.0, 0.0};
     double            m_yaw = 0.0;
+    double            m_desiredYaw = 0.0;
     bool              m_remoteOwned = false;
     Soldier*          m_driver = nullptr;
     double            m_health = kMaxHealth;
