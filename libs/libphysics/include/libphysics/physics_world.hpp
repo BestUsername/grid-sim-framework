@@ -58,6 +58,9 @@ public:
     /// Read a body's transform from the Box3D simulation world.
     std::optional<Vec3> simulatedBodyPosition(const std::string& name) const;
 
+    /// Set the Box3D velocity for a dynamic body.
+    void setSimulatedBodyVelocity(const std::string& name, const Vec3& velocity);
+
     std::size_t bodyCount() const { return m_bodies.size(); }
 
     // ── Simulation ──────────────────────────────────────────────────

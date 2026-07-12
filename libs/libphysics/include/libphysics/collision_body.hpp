@@ -9,6 +9,11 @@ namespace grid::physics {
 /// 3-component vector used throughout the physics library.
 using Vec3 = std::array<double, 3>;
 
+enum class BodyMotion {
+    Kinematic,
+    Dynamic,
+};
+
 /**
  * @brief Physical properties of a collision-capable body.
  *
@@ -23,6 +28,7 @@ struct CollisionBody {
     Vec3 prevPosition{};   ///< Position last frame (for velocity estimation).
     double mass   = 1.0;   ///< Mass in kg (0 = infinite / immovable).
     double radius = 0.5;   ///< Bounding-sphere radius (LOD 0).
+    BodyMotion motion = BodyMotion::Kinematic;
 };
 
 /**

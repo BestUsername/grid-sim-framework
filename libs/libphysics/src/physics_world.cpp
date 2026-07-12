@@ -31,7 +31,8 @@ struct PhysicsWorld::Backend {
         }
 
         b3BodyDef definition = b3DefaultBodyDef();
-        definition.type = b3_kinematicBody;
+        definition.type = body.motion == BodyMotion::Dynamic ? b3_dynamicBody : b3_kinematicBody;
+        definition.gravityScale = 0.0f;
         definition.position = {
             static_cast<float>(body.position[0]),
             static_cast<float>(body.position[1]),
@@ -46,6 +47,11 @@ struct PhysicsWorld::Backend {
         b3Sphere sphere{};
         sphere.radius = static_cast<float>(body.radius);
         b3CreateSphereShape(bodyId, &shapeDefinition, &sphere);
+        if (body.motion == BodyMotion::Dynamic) {
+            b3MassData massData = b3Body_GetMassData(bodyId);
+            massData.mass = static_cast<float>(body.mass);
+            b3Body_SetMassData(bodyId, massData);
+        }
         bodies.emplace(body.name, bodyId);
     }
 
@@ -83,6 +89,16 @@ struct PhysicsWorld::Backend {
 
         const b3Pos position = b3Body_GetPosition(it->second);
         return Vec3{position.x, position.y, position.z};
+    }
+
+    void setVelocity(const std::string& name, const Vec3& velocity)
+    {
+        const auto it = bodies.find(name);
+        if (it != bodies.end()) {
+            b3Body_SetLinearVelocity(
+                it->second,
+                {static_cast<float>(velocity[0]), static_cast<float>(velocity[1]), static_cast<float>(velocity[2])});
+        }
     }
 };
 
@@ -129,6 +145,11 @@ const CollisionBody* PhysicsWorld::body(const std::string& name) const
 std::optional<Vec3> PhysicsWorld::simulatedBodyPosition(const std::string& name) const
 {
     return m_backend->position(name);
+}
+
+void PhysicsWorld::setSimulatedBodyVelocity(const std::string& name, const Vec3& velocity)
+{
+    m_backend->setVelocity(name, velocity);
 }
 
 // ── Simulation ──────────────────────────────────────────────────────
