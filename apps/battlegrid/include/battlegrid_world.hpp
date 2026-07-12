@@ -74,6 +74,7 @@ public:
     grid::physics::PhysicsWorld& physicsWorld() { return m_physicsWorld; }
 
 private:
+    void rebuildTerrainColliders();
     COORD findSpawnPoint(TerrainType required) const;
     void registerCollisionBody(const std::string& name, const COORD& pos,
                                double mass, double radius);

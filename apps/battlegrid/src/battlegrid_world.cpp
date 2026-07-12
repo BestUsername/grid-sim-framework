@@ -33,6 +33,22 @@ static grid::libmap::MapWorld terrainMapToMapWorld(const battlegrid::TerrainMap&
     return world;
 }
 
+void BattleGridWorld::rebuildTerrainColliders()
+{
+    constexpr double terrainDepth = 100.0;
+    m_physicsWorld.clearStaticBoxes();
+
+    for (size_t z = 0; z < m_terrain.height(); ++z) {
+        for (size_t x = 0; x < m_terrain.width(); ++x) {
+            const double height = terrainHeight(m_terrain.at(x, z));
+            m_physicsWorld.addStaticBox(
+                "terrain_" + std::to_string(x) + "_" + std::to_string(z),
+                {static_cast<double>(x) + 0.5, height - terrainDepth, static_cast<double>(z) + 0.5},
+                {0.5, terrainDepth, 0.5});
+        }
+    }
+}
+
 BattleGridWorld::BattleGridWorld()
     : m_engine(60)
 {
@@ -50,6 +66,7 @@ bool BattleGridWorld::loadMap(const std::string& mapPath)
     grid::libmap::AsciiMapFormat fmt;
     auto maybeWorld = fmt.readFromFile(mapPath);
     m_mapWorld = maybeWorld ? std::move(*maybeWorld) : terrainMapToMapWorld(m_terrain);
+    rebuildTerrainColliders();
 
     std::cout << "Map loaded: " << m_terrain.width() << "x" << m_terrain.height() << "\n";
     return true;
@@ -59,6 +76,7 @@ void BattleGridWorld::loadMap(TerrainMap terrain)
 {
     m_terrain  = std::move(terrain);
     m_mapWorld = terrainMapToMapWorld(m_terrain);
+    rebuildTerrainColliders();
     std::cout << "Map loaded: " << m_terrain.width() << "x" << m_terrain.height() << "\n";
 }
 

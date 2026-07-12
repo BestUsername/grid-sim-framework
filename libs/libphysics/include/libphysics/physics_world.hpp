@@ -49,6 +49,7 @@ public:
     void removeBody(const std::string& name);
     void addStaticBox(const std::string& name, const Vec3& center, const Vec3& halfExtents);
     void removeStaticBox(const std::string& name);
+    void clearStaticBoxes();
 
     /// Update a body's position.  Call once per frame before step().
     void updateBodyPosition(const std::string& name,

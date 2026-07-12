@@ -102,6 +102,14 @@ struct PhysicsWorld::Backend {
         staticBoxes.erase(it);
     }
 
+    void clearStaticBoxes()
+    {
+        for (const auto& [name, bodyId] : staticBoxes) {
+            b3DestroyBody(bodyId);
+        }
+        staticBoxes.clear();
+    }
+
     void updatePosition(const std::string& name, const Vec3& position)
     {
         const auto it = bodies.find(name);
@@ -170,6 +178,11 @@ void PhysicsWorld::addStaticBox(const std::string& name, const Vec3& center, con
 void PhysicsWorld::removeStaticBox(const std::string& name)
 {
     m_backend->removeStaticBox(name);
+}
+
+void PhysicsWorld::clearStaticBoxes()
+{
+    m_backend->clearStaticBoxes();
 }
 
 void PhysicsWorld::updateBodyPosition(const std::string& name,

@@ -44,6 +44,11 @@ TEST(PhysicsWorldTest, AddAndRemoveStaticBox)
 
     pw.removeStaticBox("ground");
     EXPECT_EQ(pw.staticBoxCount(), 0u);
+
+    pw.addStaticBox("ground-a", {0.0, -0.5, 0.0}, {10.0, 0.5, 10.0});
+    pw.addStaticBox("ground-b", {10.0, -0.5, 0.0}, {10.0, 0.5, 10.0});
+    pw.clearStaticBoxes();
+    EXPECT_EQ(pw.staticBoxCount(), 0u);
 }
 
 TEST(PhysicsWorldTest, UpdateBodyPosition)
