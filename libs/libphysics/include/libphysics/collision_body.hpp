@@ -19,6 +19,7 @@ enum class CollisionShape {
     Sphere,
     Capsule,
     Box,
+    Cylinder,
 };
 
 /**
@@ -42,6 +43,8 @@ struct CollisionBody {
     double capsuleHeight = 1.0;
     /// Half dimensions of an axis-aligned box hull.
     Vec3 boxHalfExtents{0.5, 0.5, 0.5};
+    /// Cylinder height along its local axis. Used by wheel collision hulls.
+    double cylinderHeight = 0.3;
     BodyMotion motion = BodyMotion::Kinematic;
     double gravityScale = 0.0; ///< Multiplier for the world's gravity.
     bool lockVerticalMotion = false;

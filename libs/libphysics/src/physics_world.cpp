@@ -27,6 +27,9 @@ double boundingRadius(const CollisionBody& body)
             body.boxHalfExtents[0] * body.boxHalfExtents[0]
             + body.boxHalfExtents[1] * body.boxHalfExtents[1]
             + body.boxHalfExtents[2] * body.boxHalfExtents[2]);
+    case CollisionShape::Cylinder:
+        return std::sqrt(body.radius * body.radius
+                         + body.cylinderHeight * body.cylinderHeight * 0.25);
     }
     return body.radius;
 }
@@ -37,6 +40,7 @@ struct PhysicsWorld::Backend {
     b3WorldId world;
     std::unordered_map<std::string, b3BodyId> bodies;
     std::unordered_map<std::string, b3ShapeId> shapes;
+    std::unordered_map<std::string, b3JointId> wheelJoints;
     std::unordered_map<std::string, b3BodyId> staticBoxes;
     std::unordered_map<std::string, double> groundedUntil;
 
@@ -102,6 +106,22 @@ struct PhysicsWorld::Backend {
             shapes[body.name] = b3CreateHullShape(bodyId, &shapeDefinition, &box.base);
             break;
         }
+        case CollisionShape::Cylinder: {
+            // Box3D cylinders are created around their local Y axis. Rotate
+            // this tire hull so its axle is the body's local X axis.
+            b3HullData* cylinder = b3CreateCylinder(
+                static_cast<float>(body.cylinderHeight),
+                static_cast<float>(body.radius), 0.0f, 12);
+            b3Transform tireTransform{
+                {0.0f, 0.0f, 0.0f},
+                b3MakeQuatFromAxisAngle({0.0f, 0.0f, 1.0f},
+                                        std::numbers::pi_v<float> * 0.5f)};
+            shapeDefinition.baseMaterial.friction = 1.2f;
+            shapes[body.name] = b3CreateTransformedHullShape(
+                bodyId, &shapeDefinition, cylinder, tireTransform, {1.0f, 1.0f, 1.0f});
+            b3DestroyHull(cylinder);
+            break;
+        }
         }
         if (body.motion == BodyMotion::Dynamic) {
             b3MassData massData = b3Body_GetMassData(bodyId);
@@ -118,6 +138,19 @@ struct PhysicsWorld::Backend {
 
     void removeBody(const std::string& name)
     {
+        for (auto it = wheelJoints.begin(); it != wheelJoints.end();) {
+            const b3JointId joint = it->second;
+            const b3BodyId bodyA = b3Joint_GetBodyA(joint);
+            const b3BodyId bodyB = b3Joint_GetBodyB(joint);
+            const auto bodyIt = bodies.find(name);
+            if (bodyIt != bodies.end()
+                && (B3_ID_EQUALS(bodyA, bodyIt->second) || B3_ID_EQUALS(bodyB, bodyIt->second))) {
+                b3DestroyJoint(joint, false);
+                it = wheelJoints.erase(it);
+            } else {
+                ++it;
+            }
+        }
         const auto it = bodies.find(name);
         if (it == bodies.end()) {
             return;
@@ -127,6 +160,70 @@ struct PhysicsWorld::Backend {
         bodies.erase(it);
         shapes.erase(name);
         groundedUntil.erase(name);
+    }
+
+    bool addWheelJoint(const WheelJoint& wheel)
+    {
+        if (wheelJoints.contains(wheel.name)
+            || !bodies.contains(wheel.chassisName) || !bodies.contains(wheel.wheelName)) {
+            return false;
+        }
+
+        b3WheelJointDef definition = b3DefaultWheelJointDef();
+        definition.base.bodyIdA = bodies.at(wheel.chassisName);
+        definition.base.bodyIdB = bodies.at(wheel.wheelName);
+        definition.base.localFrameA.p = {
+            static_cast<float>(wheel.chassisAnchor[0]),
+            static_cast<float>(wheel.chassisAnchor[1]),
+            static_cast<float>(wheel.chassisAnchor[2])};
+        // The joint's X axis is suspension travel (up); Z is the wheel axle.
+        // This cyclic frame maps X→Y, Y→Z, and Z→X in chassis coordinates.
+        const b3Quat frameRotation{{0.5f, 0.5f, 0.5f}, 0.5f};
+        definition.base.localFrameA.q = frameRotation;
+        definition.base.localFrameB.q = frameRotation;
+        // Tires must not collide with their own chassis, but remain normal
+        // dynamic colliders for terrain, actors, and other vehicles.
+        definition.base.collideConnected = false;
+        definition.enableSuspensionSpring = true;
+        definition.suspensionHertz = static_cast<float>(wheel.suspensionHertz);
+        definition.suspensionDampingRatio = static_cast<float>(wheel.suspensionDampingRatio);
+        definition.enableSuspensionLimit = true;
+        definition.lowerSuspensionLimit = static_cast<float>(-wheel.suspensionTravel);
+        definition.upperSuspensionLimit = static_cast<float>(wheel.suspensionTravel);
+        definition.enableSpinMotor = true;
+        definition.maxSpinTorque = static_cast<float>(wheel.maxDriveTorque);
+        definition.enableSteering = wheel.steering;
+        definition.steeringHertz = 8.0f;
+        definition.steeringDampingRatio = 0.85f;
+        definition.maxSteeringTorque = static_cast<float>(wheel.maxSteeringTorque);
+        definition.enableSteeringLimit = wheel.steering;
+        definition.lowerSteeringLimit = static_cast<float>(-wheel.steeringLimit);
+        definition.upperSteeringLimit = static_cast<float>(wheel.steeringLimit);
+        wheelJoints.emplace(wheel.name, b3CreateWheelJoint(world, &definition));
+        return true;
+    }
+
+    void removeWheelJoint(const std::string& name)
+    {
+        if (const auto it = wheelJoints.find(name); it != wheelJoints.end()) {
+            b3DestroyJoint(it->second, false);
+            wheelJoints.erase(it);
+        }
+    }
+
+    void setWheelJointDrive(const std::string& name, double spinSpeed)
+    {
+        if (const auto it = wheelJoints.find(name); it != wheelJoints.end()) {
+            b3WheelJoint_SetSpinMotorSpeed(it->second, static_cast<float>(spinSpeed));
+        }
+    }
+
+    void setWheelJointSteering(const std::string& name, double steeringAngle)
+    {
+        if (const auto it = wheelJoints.find(name); it != wheelJoints.end()) {
+            b3WheelJoint_SetTargetSteeringAngle(
+                it->second, static_cast<float>(steeringAngle));
+        }
     }
 
     void addStaticBox(const std::string& name, const Vec3& center, const Vec3& halfExtents)
@@ -249,7 +346,7 @@ struct PhysicsWorld::Backend {
             1.0 - 2.0 * (rotation.v.y * rotation.v.y + rotation.v.x * rotation.v.x));
     }
 
-    bool contactsStaticGround(const std::string& name) const
+    bool contactsGround(const std::string& name) const
     {
         const auto bodyIt = bodies.find(name);
         const auto shapeIt = shapes.find(name);
@@ -266,15 +363,6 @@ struct PhysicsWorld::Backend {
         for (int index = 0; index < count; ++index) {
             const auto& contact = contacts[index];
             const bool bodyIsA = B3_ID_EQUALS(contact.shapeIdA, shapeIt->second);
-            const b3ShapeId otherShape = bodyIsA ? contact.shapeIdB : contact.shapeIdA;
-            const b3BodyId otherBody = b3Shape_GetBody(otherShape);
-            const bool isStatic = std::any_of(
-                staticBoxes.begin(), staticBoxes.end(), [&](const auto& staticBox) {
-                    return B3_ID_EQUALS(otherBody, staticBox.second);
-                });
-            if (!isStatic) {
-                continue;
-            }
             for (int manifoldIndex = 0; manifoldIndex < contact.manifoldCount; ++manifoldIndex) {
                 const auto& normal = contact.manifolds[manifoldIndex].normal;
                 const double upwardNormal = bodyIsA ? -normal.y : normal.y;
@@ -289,7 +377,7 @@ struct PhysicsWorld::Backend {
     void updateGrounded(double simulationTime)
     {
         for (const auto& [name, bodyId] : bodies) {
-            if (contactsStaticGround(name)) {
+            if (contactsGround(name)) {
                 groundedUntil[name] = simulationTime + kGroundGracePeriod;
             }
         }
@@ -360,8 +448,56 @@ void PhysicsWorld::addBody(const CollisionBody& body)
 
 void PhysicsWorld::removeBody(const std::string& name)
 {
+    for (auto it = m_wheelJoints.begin(); it != m_wheelJoints.end();) {
+        if (it->second.chassisName == name || it->second.wheelName == name) {
+            it = m_wheelJoints.erase(it);
+        } else {
+            ++it;
+        }
+    }
     m_bodies.erase(name);
     m_backend->removeBody(name);
+}
+
+bool PhysicsWorld::addWheelJoint(const WheelJoint& wheel)
+{
+    if (wheel.name.empty() || m_wheelJoints.contains(wheel.name)
+        || !m_bodies.contains(wheel.chassisName) || !m_bodies.contains(wheel.wheelName)) {
+        return false;
+    }
+    if (!m_backend->addWheelJoint(wheel)) {
+        return false;
+    }
+    m_wheelJoints.emplace(wheel.name, wheel);
+    return true;
+}
+
+void PhysicsWorld::removeWheelJoint(const std::string& name)
+{
+    m_backend->removeWheelJoint(name);
+    m_wheelJoints.erase(name);
+}
+
+const WheelJoint* PhysicsWorld::wheelJoint(const std::string& name) const
+{
+    const auto it = m_wheelJoints.find(name);
+    return it != m_wheelJoints.end() ? &it->second : nullptr;
+}
+
+void PhysicsWorld::setWheelJointDrive(const std::string& name, double spinSpeed)
+{
+    if (auto it = m_wheelJoints.find(name); it != m_wheelJoints.end()) {
+        it->second.driveSpeed = spinSpeed;
+        m_backend->setWheelJointDrive(name, spinSpeed);
+    }
+}
+
+void PhysicsWorld::setWheelJointSteering(const std::string& name, double steeringAngle)
+{
+    if (auto it = m_wheelJoints.find(name); it != m_wheelJoints.end()) {
+        it->second.targetSteeringAngle = steeringAngle;
+        m_backend->setWheelJointSteering(name, steeringAngle);
+    }
 }
 
 void PhysicsWorld::addStaticBox(const std::string& name, const Vec3& center, const Vec3& halfExtents)

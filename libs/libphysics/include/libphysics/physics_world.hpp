@@ -12,6 +12,30 @@
 namespace grid::physics {
 
 /**
+ * @brief Configuration for a wheel body connected to a chassis.
+ *
+ * The chassis anchor is expressed in the chassis' local coordinates.  The
+ * wheel body's local origin is its axle.  A wheel joint suppresses collision
+ * with its own chassis while retaining collision with terrain and all other
+ * bodies.
+ */
+struct WheelJoint {
+    std::string name;
+    std::string chassisName;
+    std::string wheelName;
+    Vec3 chassisAnchor{};
+    bool steering = false;
+    double suspensionHertz = 5.0;
+    double suspensionDampingRatio = 0.8;
+    double suspensionTravel = 0.25;
+    double maxDriveTorque = 2500.0;
+    double maxSteeringTorque = 1200.0;
+    double steeringLimit = 0.55;
+    double driveSpeed = 0.0;
+    double targetSteeringAngle = 0.0;
+};
+
+/**
  * @brief Deterministic collision detection and impulse resolution.
  *
  * Owns a registry of CollisionBody objects and runs a fixed-timestep
@@ -77,6 +101,17 @@ public:
     /// Whether the body has a current Box3D contact with static geometry.
     bool simulatedBodyTouchesStatic(const std::string& name) const;
 
+    // ── Vehicle wheel joints ─────────────────────────────────────────
+
+    /// Connect an already-registered wheel body to an already-registered chassis.
+    /// Returns false when a name is reused or either body is absent.
+    bool addWheelJoint(const WheelJoint& wheel);
+    void removeWheelJoint(const std::string& name);
+    const WheelJoint* wheelJoint(const std::string& name) const;
+    std::size_t wheelJointCount() const { return m_wheelJoints.size(); }
+    void setWheelJointDrive(const std::string& name, double spinSpeed);
+    void setWheelJointSteering(const std::string& name, double steeringAngle);
+
     /// Set world gravity. Bodies opt in with CollisionBody::gravityScale.
     void setGravity(const Vec3& gravity);
 
@@ -122,6 +157,7 @@ private:
                                  double restitution);
 
     std::unordered_map<std::string, CollisionBody> m_bodies;
+    std::unordered_map<std::string, WheelJoint> m_wheelJoints;
     std::unique_ptr<Backend> m_backend;
     double m_fixedTimestep;
     double m_accumulator = 0.0;

@@ -302,6 +302,59 @@ TEST(PhysicsWorldTest, LowBoxHullPushesUprightCapsule)
     EXPECT_GT((*position)[0], 3.0);
 }
 
+TEST(PhysicsWorldTest, WheelJointRegistersSuspensionAndCleansUpWithChassis)
+{
+    PhysicsWorld pw(1.0 / 120.0);
+    pw.setMaxSubSteps(0);
+    pw.setGravity({0.0, -10.0, 0.0});
+    pw.addStaticBox("ground", {0.0, -0.5, 0.0}, {10.0, 0.5, 10.0});
+
+    CollisionBody chassis;
+    chassis.name = "chassis";
+    chassis.position = {0.0, 0.70, 0.0};
+    chassis.mass = 2000.0;
+    chassis.shape = grid::physics::CollisionShape::Box;
+    chassis.boxHalfExtents = {0.6, 0.4, 1.1};
+    chassis.motion = grid::physics::BodyMotion::Dynamic;
+    chassis.gravityScale = 1.0;
+    chassis.lockRotation = true;
+
+    CollisionBody wheel;
+    wheel.name = "wheel";
+    wheel.position = {0.7, 0.30, 0.75};
+    wheel.mass = 45.0;
+    wheel.radius = 0.32;
+    wheel.shape = grid::physics::CollisionShape::Cylinder;
+    wheel.cylinderHeight = 0.2;
+    wheel.motion = grid::physics::BodyMotion::Dynamic;
+    wheel.gravityScale = 1.0;
+
+    pw.addBody(chassis);
+    pw.addBody(wheel);
+    grid::physics::WheelJoint joint;
+    joint.name = "wheel_suspension";
+    joint.chassisName = chassis.name;
+    joint.wheelName = wheel.name;
+    joint.chassisAnchor = {0.7, -0.4, 0.75};
+    joint.steering = true;
+    joint.suspensionHertz = 5.0;
+    joint.suspensionDampingRatio = 0.8;
+    joint.suspensionTravel = 0.25;
+    ASSERT_TRUE(pw.addWheelJoint(joint));
+    ASSERT_NE(pw.wheelJoint(joint.name), nullptr);
+    EXPECT_EQ(pw.wheelJointCount(), 1u);
+    EXPECT_DOUBLE_EQ(pw.wheelJoint(joint.name)->suspensionTravel, 0.25);
+
+    pw.step(1.0 / 120.0);
+    EXPECT_TRUE(pw.simulatedBodyTouchesStatic(wheel.name));
+    pw.setWheelJointDrive(joint.name, 8.0);
+    pw.setWheelJointSteering(joint.name, 0.2);
+
+    pw.removeBody(chassis.name);
+    EXPECT_EQ(pw.wheelJointCount(), 0u);
+    EXPECT_EQ(pw.wheelJoint(joint.name), nullptr);
+}
+
 TEST(PhysicsWorldTest, DynamicBodiesReportBox3DCollisionData)
 {
     PhysicsWorld pw(1.0 / 60.0);
