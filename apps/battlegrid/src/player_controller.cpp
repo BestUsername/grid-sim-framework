@@ -53,6 +53,16 @@ void PlayerController::update(double dt, const PositionSnapshot& positions)
     double moveZ = m_input.axis(GameAction::MoveZ);
     bool hasMove = std::abs(moveX) > 0.01 || std::abs(moveZ) > 0.01;
 
+    if (auto* landVehicle = dynamic_cast<LandVehicle*>(m_vehicle)) {
+        // Land vehicles use car controls rather than camera-relative walking:
+        // W is gas, S brakes, and A/D steer the front wheels.
+        landVehicle->setDrivingControls(
+            std::max(-moveZ, 0.0),
+            std::max(moveZ, 0.0),
+            moveX);
+        return;
+    }
+
     double worldX = 0.0, worldZ = 0.0;
 
     if (hasMove) {
@@ -69,10 +79,11 @@ void PlayerController::update(double dt, const PositionSnapshot& positions)
         // Face the world-space movement direction (visible in third-person
         // because the camera orbit and model yaw are now decoupled).
         double facingYaw = std::atan2(worldZ, worldX);
-        if (m_vehicle)
+        if (m_vehicle) {
             m_vehicle->setYaw(facingYaw);
-        else
+        } else {
             m_soldier.setYaw(facingYaw);
+        }
     }
 
     // Sprint: analog factor from 0 (walk) to 1 (full sprint)

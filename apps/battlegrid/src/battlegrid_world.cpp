@@ -397,12 +397,11 @@ void BattleGridWorld::dismountSoldier(Soldier& soldier, Vehicle& vehicle)
     if (dynamic_cast<LandVehicle*>(&vehicle)) {
         vehicleHalfWidth = std::max(vehicleHalfWidth, 0.70 + 0.20 * 0.5);
     }
-    const double yaw = m_physicsWorld.simulatedBodyYaw(vehicle.name())
-        .value_or(vehicle.yaw());
+    const double yaw = vehicle.yaw();
     const double dismountDistance = vehicleHalfWidth + Soldier::kCollisionRadius + 0.15;
-    COORD position{vehicle.location()[0] + std::cos(yaw) * dismountDistance,
+    COORD position{vehicle.location()[0] + std::sin(yaw) * dismountDistance,
                    vehicle.location()[1],
-                   vehicle.location()[2] - std::sin(yaw) * dismountDistance};
+                   vehicle.location()[2] - std::cos(yaw) * dismountDistance};
     registerCollisionBody(soldier.name(), position, Soldier::kMass,
                          Soldier::kCollisionRadius,
                          grid::physics::CollisionShape::Capsule, 1.8,
@@ -441,23 +440,30 @@ void BattleGridWorld::submitActorVelocities()
         if (!m_physicsWorld.body(vehicle->name())) {
             continue;
         }
-        const auto desired = vehicle->movementVelocity();
-        const double desiredSpeed = std::sqrt(
-            desired[0] * desired[0] + desired[2] * desired[2]);
-        // Vehicle models and wheel anchors use local +Z as forward, while
-        // movement intent uses atan2(z, x), whose zero is world +X.
-        const double heading = vehicle->yaw() + std::numbers::pi / 2.0;
-        const double desiredHeading = desiredSpeed > 1e-6
-            ? std::atan2(desired[2], desired[0]) : heading;
-        const double steeringError = std::remainder(
-            desiredHeading - heading, 2.0 * std::numbers::pi);
-        const double steering = std::clamp(steeringError, -0.50, 0.50);
-        const double spinSpeed = -desiredSpeed / 0.32;
+        double throttle = vehicle->throttle();
+        double brake = vehicle->brake();
+        double steering = vehicle->steering();
+        if (!vehicle->hasDriver()) {
+            const auto desired = vehicle->movementVelocity();
+            const double desiredSpeed = std::hypot(desired[0], desired[2]);
+            throttle = std::clamp(desiredSpeed / vehicle->speed(), 0.0, 1.0);
+            brake = desiredSpeed <= 1e-6 ? 1.0 : 0.0;
+            if (desiredSpeed > 1e-6) {
+                const double desiredYaw = std::atan2(desired[2], desired[0]);
+                const double yawError = std::remainder(
+                    desiredYaw - vehicle->yaw(), 2.0 * std::numbers::pi);
+                // Physics yaw grows in the opposite direction to BattleGrid's
+                // render-facing yaw, so the autonomous steering sign reverses.
+                steering = -std::clamp(yawError / 0.50, -1.0, 1.0);
+            }
+        }
+        const double spinSpeed = brake > 0.0 ? 0.0 : -throttle * vehicle->speed() / 0.32;
+        const double steeringAngle = steering * 0.50;
         for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
             const std::string joint = vehicle->wheelName(index) + "_suspension";
             m_physicsWorld.setWheelJointDrive(joint, spinSpeed);
             if (index < 2) {
-                m_physicsWorld.setWheelJointSteering(joint, steering);
+                m_physicsWorld.setWheelJointSteering(joint, steeringAngle);
             }
         }
     }
@@ -495,7 +501,7 @@ void BattleGridWorld::applySolvedTransforms(
 
     auto applyVehicleYaw = [&](const auto& vehicle) {
         if (const auto yaw = m_physicsWorld.simulatedBodyYaw(vehicle->name())) {
-            vehicle->setPhysicsYaw(*yaw);
+            vehicle->setPhysicsYaw(std::numbers::pi / 2.0 - *yaw);
         }
     };
     for (const auto& vehicle : m_landVehicles) applyVehicleYaw(vehicle);
@@ -529,13 +535,6 @@ void BattleGridWorld::stepCollisions(double dt,
 {
     retireDestroyedLandVehicles();
     submitActorVelocities();
-    for (const auto& vehicle : m_landVehicles) {
-        // Input yaw is measured from world +X, while the wheelbase's forward
-        // axis is local +Z.  Preserve the established movement controls by
-        // steering the physical chassis toward that equivalent orientation.
-        m_physicsWorld.setSimulatedBodyYaw(
-            vehicle->name(), vehicle->desiredYaw() - std::numbers::pi / 2.0);
-    }
     for (const auto& vehicle : m_seaVehicles) {
         m_physicsWorld.setSimulatedBodyYaw(vehicle->name(), vehicle->desiredYaw());
     }

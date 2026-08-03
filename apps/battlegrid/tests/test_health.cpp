@@ -402,11 +402,15 @@ TEST(BattleGridMapTest, DefaultMapContainsNavigableSuspensionBumps)
     }
 }
 
-TEST(BattleGridPhysicsTest, LandVehicleIntentDrivesAndSteersPhysicalWheels)
+TEST(BattleGridPhysicsTest, MountedLandVehicleUsesGasBrakeAndSteeringControls)
 {
     BattleGridWorld world;
     world.loadMap(TerrainMap(16, 16, TerrainType::Land));
     InputMap input;
+    input.bindKey(io::Key::W, GameAction::MoveZ, -1.0f);
+    input.bindKey(io::Key::S, GameAction::MoveZ, 1.0f);
+    input.bindKey(io::Key::A, GameAction::MoveX, -1.0f);
+    input.bindKey(io::Key::E, GameAction::Interact);
     world.populate(input);
 
     LandVehicle* vehicle = nullptr;
@@ -415,11 +419,23 @@ TEST(BattleGridPhysicsTest, LandVehicleIntentDrivesAndSteersPhysicalWheels)
         if (vehicle) break;
     }
     ASSERT_NE(vehicle, nullptr);
-    const auto start = vehicle->location();
-    vehicle->setMoveTarget({start[0] + 8.0, start[1], start[2]});
-    vehicle->update(std::chrono::duration<double>(1.0 / 60.0));
-
+    Soldier& player = world.playerSoldier();
     auto positions = world.engine().snapshotAgentPositions();
+    positions[player.name()] = vehicle->location();
+    world.playerController().setSnapshotPosition(vehicle->location());
+
+    input.processEvent(io::KeyEvent{io::Key::E, io::Action::Press});
+    world.playerController().update(1.0 / 60.0, positions);
+    ASSERT_TRUE(world.playerController().inVehicle());
+    input.processEvent(io::KeyEvent{io::Key::E, io::Action::Release});
+    input.endFrame();
+
+    input.processEvent(io::KeyEvent{io::Key::W, io::Action::Press});
+    input.processEvent(io::KeyEvent{io::Key::A, io::Action::Press});
+    world.playerController().update(1.0 / 60.0, positions);
+    EXPECT_DOUBLE_EQ(vehicle->throttle(), 1.0);
+    EXPECT_DOUBLE_EQ(vehicle->brake(), 0.0);
+    EXPECT_DOUBLE_EQ(vehicle->steering(), -1.0);
     world.stepCollisions(1.0 / 60.0, positions);
     const auto* frontWheel =
         world.physicsWorld().wheelJoint(vehicle->wheelName(0) + "_suspension");
@@ -432,13 +448,15 @@ TEST(BattleGridPhysicsTest, LandVehicleIntentDrivesAndSteersPhysicalWheels)
     EXPECT_LT(rearWheel->driveSpeed, 0.0);
     EXPECT_DOUBLE_EQ(rearWheel->targetSteeringAngle, 0.0);
 
-    for (int step = 0; step < 60; ++step) {
-        vehicle->update(std::chrono::duration<double>(1.0 / 60.0));
-        world.stepCollisions(1.0 / 60.0, positions);
-    }
-    const auto solvedYaw = world.physicsWorld().simulatedBodyYaw(vehicle->name());
-    ASSERT_TRUE(solvedYaw.has_value());
-    EXPECT_NEAR(*solvedYaw, -std::numbers::pi / 2.0, 0.35);
+    input.processEvent(io::KeyEvent{io::Key::W, io::Action::Release});
+    input.processEvent(io::KeyEvent{io::Key::A, io::Action::Release});
+    input.processEvent(io::KeyEvent{io::Key::S, io::Action::Press});
+    world.playerController().update(1.0 / 60.0, positions);
+    EXPECT_DOUBLE_EQ(vehicle->throttle(), 0.0);
+    EXPECT_DOUBLE_EQ(vehicle->brake(), 1.0);
+    EXPECT_DOUBLE_EQ(vehicle->steering(), 0.0);
+    world.stepCollisions(1.0 / 60.0, positions);
+    EXPECT_DOUBLE_EQ(frontWheel->driveSpeed, 0.0);
 }
 
 TEST(BattleGridPhysicsTest, PlayerCanJumpFromDynamicLandVehicleRoof)

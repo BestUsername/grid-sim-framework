@@ -91,6 +91,13 @@ void Vehicle::clearMoveTarget()
     m_movementVelocity = {0.0, 0.0};
 }
 
+void Vehicle::setDrivingControls(double throttle, double brake, double steering)
+{
+    m_throttle = std::clamp(throttle, 0.0, 1.0);
+    m_brake = std::clamp(brake, 0.0, 1.0);
+    m_steering = std::clamp(steering, -1.0, 1.0);
+}
+
 bool Vehicle::mount(Soldier* s)
 {
     if (m_driver || !s) return false;
