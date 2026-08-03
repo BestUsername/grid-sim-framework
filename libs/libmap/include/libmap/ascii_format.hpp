@@ -21,11 +21,13 @@ namespace grid::libmap {
  * Character mapping:
  *   - '~'  → SurfaceType::Water
  *   - '.'  → SurfaceType::Land
+ *   - ','  → SurfaceType::Land at 0.25m elevation (low navigable bump)
  *   - '^'  → SurfaceType::Mountain
  *   - other → SurfaceType::Land (default)
  *
  * On write, SurfaceType values not in the legacy set are emitted as '.'.
- * All tile elevations are set to 0.0 on read.
+ * Positive-elevation land tiles are emitted as ','; other elevations are
+ * not represented by this compact legacy format.
  */
 class AsciiMapFormat : public IMapReader, public IMapWriter {
 public:

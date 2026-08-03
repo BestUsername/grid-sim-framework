@@ -17,12 +17,12 @@ static SurfaceType charToSurface(char c)
     }
 }
 
-static char surfaceToChar(SurfaceType s)
+static char tileToChar(const TerrainTile& tile)
 {
-    switch (s) {
+    switch (tile.surface) {
     case SurfaceType::Water:    return '~';
     case SurfaceType::Mountain: return '^';
-    default:                    return '.';
+    default:                    return tile.elevation > 0.0f ? ',' : '.';
     }
 }
 
@@ -48,7 +48,7 @@ std::optional<MapWorld> AsciiMapFormat::parse(std::istream& stream) const
             char c = col < line.size() ? line[col] : '.';
             TerrainTile tile;
             tile.surface   = charToSurface(c);
-            tile.elevation = 0.0f;
+            tile.elevation = c == ',' ? 0.25f : 0.0f;
             layer.set(col, row, tile);
         }
     }
@@ -77,7 +77,7 @@ void AsciiMapFormat::serialize(const MapWorld& world, std::ostream& out) const
     const auto& layer = world.terrain();
     for (size_t z = 0; z < world.height(); ++z) {
         for (size_t x = 0; x < world.width(); ++x)
-            out << surfaceToChar(layer.get(x, z).surface);
+            out << tileToChar(layer.get(x, z));
         out << '\n';
     }
 }
