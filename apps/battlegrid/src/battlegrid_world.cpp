@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <algorithm>
+#include <numbers>
 
 namespace battlegrid {
 
@@ -27,6 +28,7 @@ static grid::libmap::MapWorld terrainMapToMapWorld(const battlegrid::TerrainMap&
             case battlegrid::TerrainType::Mountain: tile.surface = SurfaceType::Mountain; break;
             default:                                tile.surface = SurfaceType::Land;     break;
             }
+            tile.elevation = static_cast<float>(terrainHeight(terrain.at(x, z)));
             world.terrain().set(x, z, tile);
         }
     }
@@ -43,6 +45,8 @@ static double shapeBottomOffset(const grid::physics::CollisionBody& body)
         return std::max(body.capsuleHeight, 2.0 * body.radius) * 0.5;
     case CollisionShape::Box:
         return body.boxHalfExtents[1];
+    case CollisionShape::Cylinder:
+        return body.radius;
     }
     return 0.0;
 }
@@ -192,9 +196,14 @@ void BattleGridWorld::populate(InputMap& inputMap)
                               grid::physics::CollisionShape::Capsule, 1.6,
                               {0.5, 0.5, 0.5}, 1.0, false, true);
     for (auto& v : m_landVehicles)
-        registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
+    {
+        COORD chassisPosition = v->location();
+        chassisPosition[1] += 0.35;
+        registerCollisionBody(v->name(), chassisPosition, Vehicle::kMass, Vehicle::kCollisionRadius,
                               grid::physics::CollisionShape::Box, 1.0,
                               {0.6, 0.4, 1.1}, 1.0, false, true, false);
+        registerLandVehicleWheels(*v);
+    }
     for (auto& v : m_seaVehicles)
         registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
                               grid::physics::CollisionShape::Box, 1.0,
@@ -205,6 +214,74 @@ void BattleGridWorld::populate(InputMap& inputMap)
                               {0.5, 0.5, 0.5}, v->gravityScale());
 }
 
+void BattleGridWorld::registerLandVehicleWheels(const LandVehicle& vehicle)
+{
+    constexpr double wheelRadius = 0.32;
+    constexpr double wheelWidth = 0.20;
+    constexpr double wheelMass = 45.0;
+    constexpr double chassisHeight = 0.75;
+    constexpr std::array<grid::physics::Vec3, LandVehicle::kWheelCount> anchors{{
+        {-0.70, -0.40,  0.75}, {0.70, -0.40,  0.75},
+        {-0.70, -0.40, -0.75}, {0.70, -0.40, -0.75},
+    }};
+
+    for (std::size_t index = 0; index < anchors.size(); ++index) {
+        const auto& anchor = anchors[index];
+        COORD wheelPosition{
+            vehicle.location()[0] + anchor[0],
+            vehicle.location()[1] + chassisHeight + anchor[1] - wheelRadius,
+            vehicle.location()[2] + anchor[2]};
+        registerCollisionBody(vehicle.wheelName(index), wheelPosition, wheelMass, wheelRadius,
+                              grid::physics::CollisionShape::Cylinder, 1.0,
+                              {0.5, 0.5, 0.5}, 1.0, false, false, false, wheelWidth);
+        grid::physics::WheelJoint joint;
+        joint.name = vehicle.wheelName(index) + "_suspension";
+        joint.chassisName = vehicle.name();
+        joint.wheelName = vehicle.wheelName(index);
+        joint.chassisAnchor = anchor;
+        joint.steering = index < 2;
+        joint.suspensionHertz = 5.0;
+        joint.suspensionDampingRatio = 0.8;
+        joint.suspensionTravel = 0.25;
+        joint.maxDriveTorque = 3000.0;
+        joint.maxSteeringTorque = 1600.0;
+        joint.steeringLimit = 0.50;
+        m_physicsWorld.addWheelJoint(joint);
+    }
+}
+
+void BattleGridWorld::removeLandVehicleWheels(const LandVehicle& vehicle)
+{
+    for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
+        const std::string wheel = vehicle.wheelName(index);
+        m_physicsWorld.removeWheelJoint(wheel + "_suspension");
+        m_physicsWorld.removeBody(wheel);
+    }
+}
+
+void BattleGridWorld::retireDestroyedLandVehicles()
+{
+    for (const auto& vehicle : m_landVehicles) {
+        if (!vehicle->isDead() || !m_physicsWorld.body(vehicle->name())) {
+            continue;
+        }
+        Soldier* driver = vehicle->driver();
+        if (driver) {
+            driver->set_location(vehicle->location());
+            driver->setYaw(vehicle->yaw());
+        }
+        vehicle->dismount();
+        removeLandVehicleWheels(*vehicle);
+        m_physicsWorld.removeBody(vehicle->name());
+        if (driver) {
+            registerCollisionBody(driver->name(), driver->location(), Soldier::kMass,
+                                  Soldier::kCollisionRadius,
+                                  grid::physics::CollisionShape::Capsule, 1.8,
+                                  {0.5, 0.5, 0.5}, 1.0, false, true);
+        }
+    }
+}
+
 void BattleGridWorld::registerCollisionBody(const std::string& name, const COORD& pos,
                                             double mass, double radius,
                                             grid::physics::CollisionShape shape,
@@ -212,7 +289,7 @@ void BattleGridWorld::registerCollisionBody(const std::string& name, const COORD
                                             grid::physics::Vec3 boxHalfExtents,
                                             double gravityScale,
                                             bool lockVerticalMotion, bool lockRotation,
-                                            bool lockYawRotation)
+                                            bool lockYawRotation, double cylinderHeight)
 {
     grid::physics::CollisionBody body;
     body.name = name;
@@ -221,6 +298,7 @@ void BattleGridWorld::registerCollisionBody(const std::string& name, const COORD
     body.shape = shape;
     body.capsuleHeight = capsuleHeight;
     body.boxHalfExtents = boxHalfExtents;
+    body.cylinderHeight = cylinderHeight;
     body.position = {
         pos[0],
         pos[1] + (gravityScale > 0.0 || lockVerticalMotion ? shapeBottomOffset(body) : 0.0),
@@ -313,9 +391,18 @@ void BattleGridWorld::dismountSoldier(Soldier& soldier, Vehicle& vehicle)
         body && body->shape == grid::physics::CollisionShape::Box) {
         vehicleHalfWidth = body->boxHalfExtents[0];
     }
-    COORD position{vehicle.location()[0] + vehicleHalfWidth + Soldier::kCollisionRadius + 0.1,
+    // Land-vehicle tires extend farther sideways than the chassis.  Spawn
+    // clear of both, along the chassis' local right axis, so the new capsule
+    // cannot begin overlapped with a dynamic wheel or hull.
+    if (dynamic_cast<LandVehicle*>(&vehicle)) {
+        vehicleHalfWidth = std::max(vehicleHalfWidth, 0.70 + 0.20 * 0.5);
+    }
+    const double yaw = m_physicsWorld.simulatedBodyYaw(vehicle.name())
+        .value_or(vehicle.yaw());
+    const double dismountDistance = vehicleHalfWidth + Soldier::kCollisionRadius + 0.15;
+    COORD position{vehicle.location()[0] + std::cos(yaw) * dismountDistance,
                    vehicle.location()[1],
-                   vehicle.location()[2]};
+                   vehicle.location()[2] - std::sin(yaw) * dismountDistance};
     registerCollisionBody(soldier.name(), position, Soldier::kMass,
                          Soldier::kCollisionRadius,
                          grid::physics::CollisionShape::Capsule, 1.8,
@@ -350,7 +437,30 @@ void BattleGridWorld::submitActorVelocities()
                 civilian->name(), {horizontal[0], jumpSpeed, horizontal[2]});
         }
     }
-    for (const auto& vehicle : m_landVehicles) submit(vehicle);
+    for (const auto& vehicle : m_landVehicles) {
+        if (!m_physicsWorld.body(vehicle->name())) {
+            continue;
+        }
+        const auto desired = vehicle->movementVelocity();
+        const double desiredSpeed = std::sqrt(
+            desired[0] * desired[0] + desired[2] * desired[2]);
+        // Vehicle models and wheel anchors use local +Z as forward, while
+        // movement intent uses atan2(z, x), whose zero is world +X.
+        const double heading = vehicle->yaw() + std::numbers::pi / 2.0;
+        const double desiredHeading = desiredSpeed > 1e-6
+            ? std::atan2(desired[2], desired[0]) : heading;
+        const double steeringError = std::remainder(
+            desiredHeading - heading, 2.0 * std::numbers::pi);
+        const double steering = std::clamp(steeringError, -0.50, 0.50);
+        const double spinSpeed = -desiredSpeed / 0.32;
+        for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
+            const std::string joint = vehicle->wheelName(index) + "_suspension";
+            m_physicsWorld.setWheelJointDrive(joint, spinSpeed);
+            if (index < 2) {
+                m_physicsWorld.setWheelJointSteering(joint, steering);
+            }
+        }
+    }
     for (const auto& vehicle : m_seaVehicles) submit(vehicle);
     for (const auto& vehicle : m_airVehicles) {
         auto desired = vehicle->movementVelocity();
@@ -417,9 +527,14 @@ void BattleGridWorld::applySolvedTransforms(
 void BattleGridWorld::stepCollisions(double dt,
                                      std::unordered_map<std::string, COORD>& positions)
 {
+    retireDestroyedLandVehicles();
     submitActorVelocities();
     for (const auto& vehicle : m_landVehicles) {
-        m_physicsWorld.setSimulatedBodyYaw(vehicle->name(), vehicle->desiredYaw());
+        // Input yaw is measured from world +X, while the wheelbase's forward
+        // axis is local +Z.  Preserve the established movement controls by
+        // steering the physical chassis toward that equivalent orientation.
+        m_physicsWorld.setSimulatedBodyYaw(
+            vehicle->name(), vehicle->desiredYaw() - std::numbers::pi / 2.0);
     }
     for (const auto& vehicle : m_seaVehicles) {
         m_physicsWorld.setSimulatedBodyYaw(vehicle->name(), vehicle->desiredYaw());

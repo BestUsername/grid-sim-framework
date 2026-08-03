@@ -731,13 +731,16 @@ void GLDisplay::renderFrame(
                     r = 0.15f; g = 0.40f; b = 0.75f; break;
                 case TerrainType::Mountain:
                     r = 0.55f; g = 0.50f; b = 0.45f; break;
+                case TerrainType::Bump:
+                    r = 0.42f; g = 0.58f; b = 0.18f; break;
                 default: // Land
                     r = 0.30f; g = 0.65f; b = 0.20f; break;
                 }
 
                 // Tile as a flat box: 1 wide, some height, 1 deep
                 float tileH = (t == TerrainType::Mountain) ? 5.0f :
-                              (t == TerrainType::Water)    ? 1.0f : 0.5f;
+                              (t == TerrainType::Water)    ? 1.0f :
+                              (t == TerrainType::Bump)     ? 0.75f : 0.5f;
                 float cx = static_cast<float>(x) + 0.5f;
                 float cy = fy - tileH * 0.5f;
                 float cz = static_cast<float>(z) + 0.5f;

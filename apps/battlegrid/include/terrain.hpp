@@ -11,6 +11,7 @@ namespace battlegrid {
 enum class TerrainType : char {
     Water    = '~',
     Land     = '.',
+    Bump     = ',',
     Mountain = '^',
 };
 
@@ -25,6 +26,7 @@ inline double terrainHeight(TerrainType t)
     switch (t) {
     case TerrainType::Water:    return -2.0;
     case TerrainType::Land:     return  0.0;
+    case TerrainType::Bump:     return  0.25;
     case TerrainType::Mountain: return  5.0;
     }
     return 0.0;
@@ -36,7 +38,7 @@ inline double terrainHeight(TerrainType t)
  * Map file format:
  *   - First line: <width> <height>
  *   - Subsequent lines: rows of characters where:
- *       '~' = Water, '.' = Land, '^' = Mountain
+ *       '~' = Water, '.' = Land, ',' = low navigable bump, '^' = Mountain
  *
  * The map is stored row-major. grid[z][x] gives the terrain at (x, z).
  * The Y coordinate is derived from terrainHeight().

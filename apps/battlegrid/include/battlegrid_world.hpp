@@ -87,9 +87,12 @@ private:
                                grid::physics::Vec3 boxHalfExtents = {0.5, 0.5, 0.5},
                                double gravityScale = 1.0,
                                bool lockVerticalMotion = false, bool lockRotation = false,
-                               bool lockYawRotation = true);
+                               bool lockYawRotation = true, double cylinderHeight = 0.3);
     void submitActorVelocities();
     void applySolvedTransforms(std::unordered_map<std::string, COORD>& positions);
+    void retireDestroyedLandVehicles();
+    void registerLandVehicleWheels(const LandVehicle& vehicle);
+    void removeLandVehicleWheels(const LandVehicle& vehicle);
 
     BASE_ENGINE  m_engine;
     TerrainMap   m_terrain;

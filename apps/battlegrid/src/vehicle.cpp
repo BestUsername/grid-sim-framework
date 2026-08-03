@@ -138,6 +138,13 @@ LandVehicle::LandVehicle(I_ENVIRONMENT& env, const COORD& location,
 {
 }
 
+std::string LandVehicle::wheelName(std::size_t index) const
+{
+    static constexpr std::array<const char*, kWheelCount> positions{
+        "front_left", "front_right", "rear_left", "rear_right"};
+    return m_name + "_wheel_" + positions.at(index);
+}
+
 // ── SeaVehicle ──────────────────────────────────────────────────────
 
 SeaVehicle::SeaVehicle(I_ENVIRONMENT& env, const COORD& location,

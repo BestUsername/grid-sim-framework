@@ -75,7 +75,7 @@ public:
     static constexpr double kCollisionRadius =  0.4;
     static constexpr double kMass            = 80.0; // kg
     static constexpr double kMaxHealth       = 100.0;
-    static constexpr double kDamageThreshold = 10.0; // impulse/mass below this is harmless
+    static constexpr double kDamageThreshold = 20.0; // impulse/mass below this is harmless
 
 private:
     void moveTowardTarget(double dt);

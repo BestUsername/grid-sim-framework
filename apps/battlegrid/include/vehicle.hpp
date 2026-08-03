@@ -8,6 +8,8 @@
 #include "libphysics/collision_body.hpp"
 #include "libsim/base_agent.hpp"
 
+#include <array>
+
 namespace battlegrid {
 
 class Soldier; // forward
@@ -91,6 +93,9 @@ public:
     LandVehicle(I_ENVIRONMENT& env, const COORD& location,
                 const std::string& name, Faction faction,
                 const TerrainMap& map, double speed = 10.0);
+
+    static constexpr std::size_t kWheelCount = 4;
+    std::string wheelName(std::size_t index) const;
 
 };
 

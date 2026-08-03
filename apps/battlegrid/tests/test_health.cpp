@@ -8,6 +8,9 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <numbers>
+
 using namespace battlegrid;
 
 namespace {
@@ -108,8 +111,8 @@ TEST(SoldierHealthTest, CollisionAboveThresholdCausesDamage)
     TestEngine env;
     auto map = makeFlatMap();
     Soldier s(env, COORD{5.0, 0.0, 5.0}, "S1", Faction::Blue, map, 3.0, 10.0f);
-    // impulse / mass = 1200 / 80 = 15.0, above threshold 10.0 → damage = 5.0
-    auto evt = makeHit("S1", "Other", 1200.0, Soldier::kMass, 2000.0);
+    // impulse / mass = 2000 / 80 = 25.0, above threshold 20.0 → damage = 5.0
+    auto evt = makeHit("S1", "Other", 2000.0, Soldier::kMass, 2000.0);
     s.on_event(&evt);
     EXPECT_DOUBLE_EQ(s.health(), Soldier::kMaxHealth - 5.0);
 }
@@ -307,12 +310,14 @@ TEST(BattleGridPhysicsTest, RegistersPeopleAsCapsulesAndSurfaceVehiclesAsHullBox
     EXPECT_TRUE(playerBody->lockRotation);
 
     const grid::physics::CollisionBody* landBody = nullptr;
+    const LandVehicle* landVehicle = nullptr;
     const grid::physics::CollisionBody* seaBody = nullptr;
     const grid::physics::CollisionBody* airBody = nullptr;
     const AirVehicle* airVehicle = nullptr;
     for (const auto& agent : world.getAllAgents()) {
         if (dynamic_cast<LandVehicle*>(agent.get())) {
             landBody = world.physicsWorld().body(agent->name());
+            landVehicle = static_cast<LandVehicle*>(agent.get());
         } else if (dynamic_cast<SeaVehicle*>(agent.get())) {
             seaBody = world.physicsWorld().body(agent->name());
         } else if (auto* air = dynamic_cast<AirVehicle*>(agent.get())) {
@@ -322,11 +327,32 @@ TEST(BattleGridPhysicsTest, RegistersPeopleAsCapsulesAndSurfaceVehiclesAsHullBox
     }
 
     ASSERT_NE(landBody, nullptr);
+    ASSERT_NE(landVehicle, nullptr);
     EXPECT_EQ(landBody->shape, grid::physics::CollisionShape::Box);
     EXPECT_EQ(landBody->boxHalfExtents, (grid::physics::Vec3{0.6, 0.4, 1.1}));
-    EXPECT_DOUBLE_EQ(landBody->position[1], 0.4);
+    EXPECT_DOUBLE_EQ(landBody->position[1], 0.75);
     EXPECT_TRUE(landBody->lockRotation);
     EXPECT_FALSE(landBody->lockYawRotation);
+    for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
+        const std::string wheelName = landVehicle->wheelName(index);
+        const auto* wheel = world.physicsWorld().body(wheelName);
+        ASSERT_NE(wheel, nullptr);
+        EXPECT_EQ(wheel->shape, grid::physics::CollisionShape::Cylinder);
+        EXPECT_DOUBLE_EQ(wheel->radius, 0.32);
+        EXPECT_DOUBLE_EQ(wheel->cylinderHeight, 0.20);
+        EXPECT_EQ(wheel->motion, grid::physics::BodyMotion::Dynamic);
+        EXPECT_FALSE(wheel->lockRotation);
+
+        const auto* suspension =
+            world.physicsWorld().wheelJoint(wheelName + "_suspension");
+        ASSERT_NE(suspension, nullptr);
+        EXPECT_EQ(suspension->chassisName, landVehicle->name());
+        EXPECT_EQ(suspension->wheelName, wheelName);
+        EXPECT_EQ(suspension->steering, index < 2);
+        EXPECT_DOUBLE_EQ(suspension->suspensionHertz, 5.0);
+        EXPECT_DOUBLE_EQ(suspension->suspensionDampingRatio, 0.8);
+        EXPECT_DOUBLE_EQ(suspension->suspensionTravel, 0.25);
+    }
 
     ASSERT_NE(seaBody, nullptr);
     EXPECT_EQ(seaBody->shape, grid::physics::CollisionShape::Box);
@@ -338,6 +364,148 @@ TEST(BattleGridPhysicsTest, RegistersPeopleAsCapsulesAndSurfaceVehiclesAsHullBox
     ASSERT_NE(airVehicle, nullptr);
     EXPECT_EQ(airBody->shape, grid::physics::CollisionShape::Sphere);
     EXPECT_DOUBLE_EQ(airBody->position[1], airVehicle->location()[1]);
+}
+
+TEST(BattleGridMapTest, DefaultMapContainsNavigableSuspensionBumps)
+{
+    const auto mapPath = std::filesystem::path(__FILE__).parent_path().parent_path()
+        / "maps" / "default.map";
+    TerrainMap map;
+    ASSERT_TRUE(map.loadFromFile(mapPath.string()));
+    ASSERT_EQ(map.width(), 64u);
+    ASSERT_EQ(map.height(), 64u);
+
+    std::size_t bumps = 0;
+    for (std::size_t z = 0; z < map.height(); ++z) {
+        for (std::size_t x = 0; x < map.width(); ++x) {
+            if (map.at(x, z) == TerrainType::Bump) {
+                ++bumps;
+                EXPECT_DOUBLE_EQ(map.heightAt(static_cast<double>(x), static_cast<double>(z)), 0.25);
+            }
+        }
+    }
+    EXPECT_GT(bumps, 0u);
+    EXPECT_LT(terrainHeight(TerrainType::Bump), Vehicle::kMaxStepUp);
+
+    BattleGridWorld world;
+    ASSERT_TRUE(world.loadMap(mapPath.string()));
+    EXPECT_EQ(world.physicsWorld().staticBoxCount(), 64u * 64u);
+    for (std::size_t z = 0; z < map.height(); ++z) {
+        for (std::size_t x = 0; x < map.width(); ++x) {
+            if (map.at(x, z) == TerrainType::Bump) {
+                const auto& tile = world.mapWorld().terrain().get(x, z);
+                EXPECT_EQ(tile.surface, grid::libmap::SurfaceType::Land);
+                EXPECT_FLOAT_EQ(tile.elevation, 0.25f);
+                return;
+            }
+        }
+    }
+}
+
+TEST(BattleGridPhysicsTest, LandVehicleIntentDrivesAndSteersPhysicalWheels)
+{
+    BattleGridWorld world;
+    world.loadMap(TerrainMap(16, 16, TerrainType::Land));
+    InputMap input;
+    world.populate(input);
+
+    LandVehicle* vehicle = nullptr;
+    for (const auto& agent : world.getAllAgents()) {
+        vehicle = dynamic_cast<LandVehicle*>(agent.get());
+        if (vehicle) break;
+    }
+    ASSERT_NE(vehicle, nullptr);
+    const auto start = vehicle->location();
+    vehicle->setMoveTarget({start[0] + 8.0, start[1], start[2]});
+    vehicle->update(std::chrono::duration<double>(1.0 / 60.0));
+
+    auto positions = world.engine().snapshotAgentPositions();
+    world.stepCollisions(1.0 / 60.0, positions);
+    const auto* frontWheel =
+        world.physicsWorld().wheelJoint(vehicle->wheelName(0) + "_suspension");
+    const auto* rearWheel =
+        world.physicsWorld().wheelJoint(vehicle->wheelName(2) + "_suspension");
+    ASSERT_NE(frontWheel, nullptr);
+    ASSERT_NE(rearWheel, nullptr);
+    EXPECT_LT(frontWheel->driveSpeed, 0.0);
+    EXPECT_NEAR(frontWheel->targetSteeringAngle, -0.50, 1e-9);
+    EXPECT_LT(rearWheel->driveSpeed, 0.0);
+    EXPECT_DOUBLE_EQ(rearWheel->targetSteeringAngle, 0.0);
+
+    for (int step = 0; step < 60; ++step) {
+        vehicle->update(std::chrono::duration<double>(1.0 / 60.0));
+        world.stepCollisions(1.0 / 60.0, positions);
+    }
+    const auto solvedYaw = world.physicsWorld().simulatedBodyYaw(vehicle->name());
+    ASSERT_TRUE(solvedYaw.has_value());
+    EXPECT_NEAR(*solvedYaw, -std::numbers::pi / 2.0, 0.35);
+}
+
+TEST(BattleGridPhysicsTest, PlayerCanJumpFromDynamicLandVehicleRoof)
+{
+    BattleGridWorld world;
+    world.loadMap(TerrainMap(16, 16, TerrainType::Land));
+    InputMap input;
+    world.populate(input);
+    world.physicsWorld().setMaxSubSteps(0);
+
+    LandVehicle* vehicle = nullptr;
+    for (const auto& agent : world.getAllAgents()) {
+        vehicle = dynamic_cast<LandVehicle*>(agent.get());
+        if (vehicle) break;
+    }
+    ASSERT_NE(vehicle, nullptr);
+
+    const auto chassis = world.physicsWorld().simulatedBodyPosition(vehicle->name());
+    ASSERT_TRUE(chassis.has_value());
+    Soldier& player = world.playerSoldier();
+    world.physicsWorld().updateBodyPosition(
+        player.name(), (*chassis)[0],
+        (*chassis)[1] + 0.4 + 0.9 - 0.02, (*chassis)[2]);
+    world.physicsWorld().setSimulatedBodyVelocity(player.name(), {0.0, 0.0, 0.0});
+
+    auto positions = world.engine().snapshotAgentPositions();
+    world.stepCollisions(1.0 / 120.0, positions);
+    ASSERT_TRUE(world.physicsWorld().simulatedBodyGrounded(player.name()));
+
+    player.setMovementVelocity(4.0, 0.0);
+    player.jump();
+    world.stepCollisions(1.0 / 120.0, positions);
+
+    const auto velocity = world.physicsWorld().simulatedBodyVelocity(player.name());
+    ASSERT_TRUE(velocity.has_value());
+    EXPECT_GT((*velocity)[1], 7.0);
+    EXPECT_GT((*velocity)[0], 0.0);
+}
+
+TEST(BattleGridPhysicsTest, DestroyedLandVehicleCleansUpWheelsAndMountedDriver)
+{
+    BattleGridWorld world;
+    world.loadMap(TerrainMap(16, 16, TerrainType::Land));
+    InputMap input;
+    world.populate(input);
+
+    LandVehicle* vehicle = nullptr;
+    for (const auto& agent : world.getAllAgents()) {
+        vehicle = dynamic_cast<LandVehicle*>(agent.get());
+        if (vehicle) break;
+    }
+    ASSERT_NE(vehicle, nullptr);
+    Soldier& player = world.playerSoldier();
+    ASSERT_TRUE(world.mountSoldier(player, *vehicle));
+    vehicle->takeDamage(Vehicle::kMaxHealth);
+
+    auto positions = world.engine().snapshotAgentPositions();
+    world.stepCollisions(1.0 / 60.0, positions);
+    EXPECT_EQ(world.physicsWorld().body(vehicle->name()), nullptr);
+    EXPECT_FALSE(vehicle->hasDriver());
+    ASSERT_NE(world.physicsWorld().body(player.name()), nullptr);
+    for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
+        EXPECT_EQ(world.physicsWorld().body(vehicle->wheelName(index)), nullptr);
+        EXPECT_EQ(world.physicsWorld().wheelJoint(
+                      vehicle->wheelName(index) + "_suspension"),
+                  nullptr);
+    }
 }
 
 TEST(BattleGridPhysicsTest, MountedDriverUsesVehicleTransformUntilDismount)
@@ -364,4 +532,11 @@ TEST(BattleGridPhysicsTest, MountedDriverUsesVehicleTransformUntilDismount)
 
     world.dismountSoldier(player, *vehicle);
     ASSERT_NE(world.physicsWorld().body(player.name()), nullptr);
+    const auto chassis = world.physicsWorld().simulatedBodyPosition(vehicle->name());
+    const auto dismounted = world.physicsWorld().simulatedBodyPosition(player.name());
+    ASSERT_TRUE(chassis.has_value());
+    ASSERT_TRUE(dismounted.has_value());
+    EXPECT_GT(std::hypot((*dismounted)[0] - (*chassis)[0],
+                         (*dismounted)[2] - (*chassis)[2]),
+              0.70 + 0.20 * 0.5 + Soldier::kCollisionRadius);
 }
