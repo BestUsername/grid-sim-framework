@@ -8,13 +8,33 @@
 
 namespace grid::libmap {
 
-static SurfaceType charToSurface(char c)
+static TerrainTile charToTile(char c)
 {
+    TerrainTile tile;
     switch (c) {
-    case '~': return SurfaceType::Water;
-    case '^': return SurfaceType::Mountain;
-    default:  return SurfaceType::Land;
+    case '~':
+        tile.surface = SurfaceType::Water;
+        break;
+    case '^':
+        tile.surface = SurfaceType::Mountain;
+        break;
+    case ',':
+        tile.elevation = 0.25f;
+        break;
+    case 'N':
+    case 'S':
+    case 'E':
+    case 'W':
+        tile.elevation = 0.5f;
+        tile.tags.emplace("battlegrid:slope", std::string(1, c));
+        break;
+    case 'H':
+        tile.elevation = 1.0f;
+        break;
+    default:
+        break;
     }
+    return tile;
 }
 
 static char tileToChar(const TerrainTile& tile)
@@ -22,7 +42,15 @@ static char tileToChar(const TerrainTile& tile)
     switch (tile.surface) {
     case SurfaceType::Water:    return '~';
     case SurfaceType::Mountain: return '^';
-    default:                    return tile.elevation > 0.0f ? ',' : '.';
+    default:
+        if (const auto slope = tile.tags.find("battlegrid:slope");
+            slope != tile.tags.end() && slope->second.size() == 1) {
+            const char direction = slope->second.front();
+            if (direction == 'N' || direction == 'S' || direction == 'E' || direction == 'W') {
+                return direction;
+            }
+        }
+        return tile.elevation >= 1.0f ? 'H' : tile.elevation > 0.0f ? ',' : '.';
     }
 }
 
@@ -46,10 +74,7 @@ std::optional<MapWorld> AsciiMapFormat::parse(std::istream& stream) const
         }
         for (size_t col = 0; col < w; ++col) {
             char c = col < line.size() ? line[col] : '.';
-            TerrainTile tile;
-            tile.surface   = charToSurface(c);
-            tile.elevation = c == ',' ? 0.25f : 0.0f;
-            layer.set(col, row, tile);
+            layer.set(col, row, charToTile(c));
         }
     }
     return world;

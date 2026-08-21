@@ -22,12 +22,15 @@ namespace grid::libmap {
  *   - '~'  → SurfaceType::Water
  *   - '.'  → SurfaceType::Land
  *   - ','  → SurfaceType::Land at 0.25m elevation (low navigable bump)
+ *   - N/S/E/W → SurfaceType::Land at 0.5m average elevation with a
+ *                `battlegrid:slope` direction tag
+ *   - H → SurfaceType::Land at 1m elevation (low hill plateau)
  *   - '^'  → SurfaceType::Mountain
  *   - other → SurfaceType::Land (default)
  *
  * On write, SurfaceType values not in the legacy set are emitted as '.'.
- * Positive-elevation land tiles are emitted as ','; other elevations are
- * not represented by this compact legacy format.
+ * Positive-elevation land tiles are emitted as ',' unless a supported
+ * BattleGrid slope tag or one-metre hill elevation is present.
  */
 class AsciiMapFormat : public IMapReader, public IMapWriter {
 public:

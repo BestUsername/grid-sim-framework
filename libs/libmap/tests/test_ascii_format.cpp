@@ -82,6 +82,21 @@ TEST(AsciiFormatTest, ShortRowPaddedWithLand)
     EXPECT_EQ(result->terrain().get(3, 0).surface, SurfaceType::Land);
 }
 
+TEST(AsciiFormatTest, PreservesBattleGridSlopeAndHillTiles)
+{
+    AsciiMapFormat fmt;
+    auto result = fmt.readFromString("5 1\nNSEWH");
+    ASSERT_TRUE(result.has_value());
+    const auto& terrain = result->terrain();
+    EXPECT_EQ(terrain.get(0, 0).tags.at("battlegrid:slope"), "N");
+    EXPECT_EQ(terrain.get(1, 0).tags.at("battlegrid:slope"), "S");
+    EXPECT_EQ(terrain.get(2, 0).tags.at("battlegrid:slope"), "E");
+    EXPECT_EQ(terrain.get(3, 0).tags.at("battlegrid:slope"), "W");
+    EXPECT_FLOAT_EQ(terrain.get(0, 0).elevation, 0.5f);
+    EXPECT_FLOAT_EQ(terrain.get(4, 0).elevation, 1.0f);
+    EXPECT_EQ(fmt.writeToString(*result), "5 1\nNSEWH\n");
+}
+
 TEST(AsciiFormatTest, MissingRowReturnsNullopt)
 {
     AsciiMapFormat fmt;
