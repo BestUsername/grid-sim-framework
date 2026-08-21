@@ -48,6 +48,11 @@ bool TerrainMap::loadFromFile(const std::string& path)
             switch (c) {
             case '~': rowData.push_back(TerrainType::Water);    break;
             case ',': rowData.push_back(TerrainType::Bump);     break;
+            case 'N': rowData.push_back(TerrainType::SlopeNorth); break;
+            case 'S': rowData.push_back(TerrainType::SlopeSouth); break;
+            case 'E': rowData.push_back(TerrainType::SlopeEast);  break;
+            case 'W': rowData.push_back(TerrainType::SlopeWest);  break;
+            case 'H': rowData.push_back(TerrainType::Hill);       break;
             case '^': rowData.push_back(TerrainType::Mountain); break;
             default:  rowData.push_back(TerrainType::Land);     break;
             }

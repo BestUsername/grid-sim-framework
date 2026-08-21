@@ -58,11 +58,39 @@ void BattleGridWorld::rebuildTerrainColliders()
 
     for (size_t z = 0; z < m_terrain.height(); ++z) {
         for (size_t x = 0; x < m_terrain.width(); ++x) {
-            const double height = terrainHeight(m_terrain.at(x, z));
-            m_physicsWorld.addStaticBox(
-                "terrain_" + std::to_string(x) + "_" + std::to_string(z),
-                {static_cast<double>(x) + 0.5, height - terrainDepth, static_cast<double>(z) + 0.5},
-                {0.5, terrainDepth, 0.5});
+            const std::string name = "terrain_" + std::to_string(x) + "_" + std::to_string(z);
+            const grid::physics::Vec3 center{
+                static_cast<double>(x) + 0.5, 0.0, static_cast<double>(z) + 0.5};
+            const auto terrain = m_terrain.at(x, z);
+            switch (terrain) {
+            case TerrainType::SlopeNorth:
+                m_physicsWorld.addStaticRamp(
+                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 1.0,
+                    grid::physics::RampDirection::North);
+                break;
+            case TerrainType::SlopeSouth:
+                m_physicsWorld.addStaticRamp(
+                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 1.0,
+                    grid::physics::RampDirection::South);
+                break;
+            case TerrainType::SlopeEast:
+                m_physicsWorld.addStaticRamp(
+                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 1.0,
+                    grid::physics::RampDirection::East);
+                break;
+            case TerrainType::SlopeWest:
+                m_physicsWorld.addStaticRamp(
+                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 1.0,
+                    grid::physics::RampDirection::West);
+                break;
+            default: {
+                const double height = terrainHeight(terrain);
+                m_physicsWorld.addStaticBox(
+                    name, {center[0], height - terrainDepth, center[2]},
+                    {0.5, terrainDepth, 0.5});
+                break;
+            }
+            }
         }
     }
 }

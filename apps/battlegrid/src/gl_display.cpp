@@ -506,6 +506,18 @@ GLDisplay::Mat4 GLDisplay::translate(float x, float y, float z)
     return m;
 }
 
+GLDisplay::Mat4 GLDisplay::rotateX(float radians)
+{
+    Mat4 m = identity();
+    float c = std::cos(radians);
+    float s = std::sin(radians);
+    m.m[5] = c;
+    m.m[6] = s;
+    m.m[9] = -s;
+    m.m[10] = c;
+    return m;
+}
+
 GLDisplay::Mat4 GLDisplay::rotateY(float radians)
 {
     Mat4 m = identity();
@@ -515,6 +527,18 @@ GLDisplay::Mat4 GLDisplay::rotateY(float radians)
     m.m[2]  = -s;
     m.m[8]  =  s;
     m.m[10] =  c;
+    return m;
+}
+
+GLDisplay::Mat4 GLDisplay::rotateZ(float radians)
+{
+    Mat4 m = identity();
+    float c = std::cos(radians);
+    float s = std::sin(radians);
+    m.m[0] = c;
+    m.m[1] = s;
+    m.m[4] = -s;
+    m.m[5] = c;
     return m;
 }
 
@@ -534,6 +558,31 @@ void GLDisplay::drawCube(const Mat4& vp, float x, float y, float z,
 {
     Mat4 model = multiply(translate(x, y, z), scale(sx, sy, sz));
     Mat4 mvp = multiply(vp, model);
+    glUniformMatrix4fv(m_mvpLoc, 1, GL_FALSE, mvp.m);
+    glUniform3f(m_colorLoc, r, g, b);
+    glUniform1f(m_alphaLoc, 1.0f);
+    glBindVertexArray(m_cubeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+}
+
+void GLDisplay::drawRamp(const Mat4& vp, float x, float z, TerrainType direction,
+                         float r, float g, float b)
+{
+    constexpr float rampAngle = 0.7853981633974483f;
+    constexpr float rampLength = 1.4142135623730951f;
+    Mat4 rotation = identity();
+    switch (direction) {
+    case TerrainType::SlopeNorth: rotation = rotateX(rampAngle); break;
+    case TerrainType::SlopeSouth: rotation = rotateX(-rampAngle); break;
+    case TerrainType::SlopeEast:  rotation = rotateZ(rampAngle); break;
+    case TerrainType::SlopeWest:  rotation = rotateZ(-rampAngle); break;
+    default: break;
+    }
+    const bool alongZ = direction == TerrainType::SlopeNorth || direction == TerrainType::SlopeSouth;
+    const Mat4 dimensions = alongZ ? scale(1.0f, 0.08f, rampLength)
+                                   : scale(rampLength, 0.08f, 1.0f);
+    const Mat4 model = multiply(translate(x, 0.5f, z), multiply(rotation, dimensions));
+    const Mat4 mvp = multiply(vp, model);
     glUniformMatrix4fv(m_mvpLoc, 1, GL_FALSE, mvp.m);
     glUniform3f(m_colorLoc, r, g, b);
     glUniform1f(m_alphaLoc, 1.0f);
@@ -733,14 +782,29 @@ void GLDisplay::renderFrame(
                     r = 0.55f; g = 0.50f; b = 0.45f; break;
                 case TerrainType::Bump:
                     r = 0.42f; g = 0.58f; b = 0.18f; break;
+                case TerrainType::SlopeNorth:
+                case TerrainType::SlopeSouth:
+                case TerrainType::SlopeEast:
+                case TerrainType::SlopeWest:
+                    r = 0.48f; g = 0.66f; b = 0.22f; break;
+                case TerrainType::Hill:
+                    r = 0.38f; g = 0.56f; b = 0.16f; break;
                 default: // Land
                     r = 0.30f; g = 0.65f; b = 0.20f; break;
+                }
+
+                if (t == TerrainType::SlopeNorth || t == TerrainType::SlopeSouth
+                    || t == TerrainType::SlopeEast || t == TerrainType::SlopeWest) {
+                    drawRamp(vp, static_cast<float>(x) + 0.5f, static_cast<float>(z) + 0.5f,
+                             t, r, g, b);
+                    continue;
                 }
 
                 // Tile as a flat box: 1 wide, some height, 1 deep
                 float tileH = (t == TerrainType::Mountain) ? 5.0f :
                               (t == TerrainType::Water)    ? 1.0f :
-                              (t == TerrainType::Bump)     ? 0.75f : 0.5f;
+                              (t == TerrainType::Bump)     ? 0.75f :
+                              (t == TerrainType::Hill)     ? 1.5f : 0.5f;
                 float cx = static_cast<float>(x) + 0.5f;
                 float cy = fy - tileH * 0.5f;
                 float cz = static_cast<float>(z) + 0.5f;

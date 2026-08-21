@@ -73,11 +73,15 @@ private:
                        float ux, float uy, float uz);
     static Mat4 multiply(const Mat4& a, const Mat4& b);
     static Mat4 translate(float x, float y, float z);
+    static Mat4 rotateX(float radians);
     static Mat4 rotateY(float radians);
+    static Mat4 rotateZ(float radians);
     static Mat4 scale(float sx, float sy, float sz);
 
     void drawCube(const Mat4& vp, float x, float y, float z,
                   float sx, float sy, float sz,
+                  float r, float g, float b);
+    void drawRamp(const Mat4& vp, float x, float z, TerrainType direction,
                   float r, float g, float b);
     void drawPyramid(const Mat4& vp, float x, float y, float z,
                      float s, float r, float g, float b);

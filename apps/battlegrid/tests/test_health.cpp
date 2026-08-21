@@ -402,6 +402,35 @@ TEST(BattleGridMapTest, DefaultMapContainsNavigableSuspensionBumps)
     }
 }
 
+TEST(BattleGridMapTest, DefaultMapContainsDriveableSlopedHill)
+{
+    const auto mapPath = std::filesystem::path(__FILE__).parent_path().parent_path()
+        / "maps" / "default.map";
+    TerrainMap map;
+    ASSERT_TRUE(map.loadFromFile(mapPath.string()));
+
+    std::size_t slopes = 0;
+    std::size_t hills = 0;
+    for (std::size_t z = 0; z < map.height(); ++z) {
+        for (std::size_t x = 0; x < map.width(); ++x) {
+            const auto terrain = map.at(x, z);
+            slopes += terrain == TerrainType::SlopeNorth || terrain == TerrainType::SlopeSouth
+                || terrain == TerrainType::SlopeEast || terrain == TerrainType::SlopeWest;
+            hills += terrain == TerrainType::Hill;
+        }
+    }
+    EXPECT_EQ(slopes, 4u);
+    EXPECT_EQ(hills, 1u);
+
+    BattleGridWorld world;
+    ASSERT_TRUE(world.loadMap(mapPath.string()));
+    EXPECT_EQ(world.physicsWorld().staticBoxCount(), 64u * 64u);
+    const auto& hill = world.mapWorld().terrain().get(32, 24);
+    EXPECT_EQ(hill.surface, grid::libmap::SurfaceType::Land);
+    EXPECT_FLOAT_EQ(hill.elevation, 1.0f);
+    EXPECT_EQ(world.mapWorld().terrain().get(32, 23).tags.at("battlegrid:slope"), "S");
+}
+
 TEST(BattleGridPhysicsTest, MountedLandVehicleUsesForwardReverseAndSteeringControls)
 {
     BattleGridWorld world;
