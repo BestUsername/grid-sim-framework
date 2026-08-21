@@ -252,6 +252,49 @@ struct PhysicsWorld::Backend {
         staticBoxes.emplace(name, bodyId);
     }
 
+    void addStaticRamp(const std::string& name, const Vec3& center,
+                       const Vec3& halfExtents, double baseHeight, double rise,
+                       RampDirection direction)
+    {
+        if (const auto existing = staticBoxes.find(name); existing != staticBoxes.end()) {
+            b3DestroyBody(existing->second);
+            staticBoxes.erase(existing);
+        }
+
+        const float halfWidth = static_cast<float>(halfExtents[0]);
+        const float halfDepth = static_cast<float>(halfExtents[2]);
+        const float bottom = static_cast<float>(-halfExtents[1]);
+        const float top = static_cast<float>(rise);
+        const bool risesAlongZ = direction == RampDirection::North || direction == RampDirection::South;
+        const bool risesPositive = direction == RampDirection::South || direction == RampDirection::East;
+        const float lowX = risesAlongZ || risesPositive ? -halfWidth : halfWidth;
+        const float highX = risesAlongZ || risesPositive ? halfWidth : -halfWidth;
+        const float lowZ = risesAlongZ ? (risesPositive ? -halfDepth : halfDepth) : -halfDepth;
+        const float highZ = risesAlongZ ? (risesPositive ? halfDepth : -halfDepth) : halfDepth;
+        const b3Vec3 points[] = {
+            {-halfWidth, bottom, -halfDepth}, {halfWidth, bottom, -halfDepth},
+            {-halfWidth, bottom, halfDepth},  {halfWidth, bottom, halfDepth},
+            {risesAlongZ ? -halfWidth : lowX, 0.0f, risesAlongZ ? lowZ : -halfDepth},
+            {risesAlongZ ? halfWidth : lowX, 0.0f, risesAlongZ ? lowZ : halfDepth},
+            {risesAlongZ ? -halfWidth : highX, top, risesAlongZ ? highZ : -halfDepth},
+            {risesAlongZ ? halfWidth : highX, top, risesAlongZ ? highZ : halfDepth},
+        };
+
+        b3BodyDef definition = b3DefaultBodyDef();
+        definition.position = {
+            static_cast<float>(center[0]),
+            static_cast<float>(baseHeight),
+            static_cast<float>(center[2])};
+        definition.name = name.c_str();
+
+        const b3BodyId bodyId = b3CreateBody(world, &definition);
+        b3ShapeDef shapeDefinition = b3DefaultShapeDef();
+        b3HullData* ramp = b3CreateHull(points, 8, 8);
+        b3CreateHullShape(bodyId, &shapeDefinition, ramp);
+        b3DestroyHull(ramp);
+        staticBoxes.emplace(name, bodyId);
+    }
+
     void removeStaticBox(const std::string& name)
     {
         const auto it = staticBoxes.find(name);
@@ -505,6 +548,13 @@ void PhysicsWorld::setWheelJointSteering(const std::string& name, double steerin
 void PhysicsWorld::addStaticBox(const std::string& name, const Vec3& center, const Vec3& halfExtents)
 {
     m_backend->addStaticBox(name, center, halfExtents);
+}
+
+void PhysicsWorld::addStaticRamp(const std::string& name, const Vec3& center,
+                                 const Vec3& halfExtents, double baseHeight, double rise,
+                                 RampDirection direction)
+{
+    m_backend->addStaticRamp(name, center, halfExtents, baseHeight, rise, direction);
 }
 
 void PhysicsWorld::removeStaticBox(const std::string& name)

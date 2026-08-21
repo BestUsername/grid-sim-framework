@@ -11,6 +11,14 @@
 
 namespace grid::physics {
 
+/// Direction in which a static ramp rises across its horizontal extent.
+enum class RampDirection {
+    North,
+    South,
+    East,
+    West,
+};
+
 /**
  * @brief Configuration for a wheel body connected to a chassis.
  *
@@ -73,6 +81,10 @@ public:
     void addBody(const CollisionBody& body);
     void removeBody(const std::string& name);
     void addStaticBox(const std::string& name, const Vec3& center, const Vec3& halfExtents);
+    /// Add a solid, one-tile ramp rising from @p baseHeight by @p rise.
+    void addStaticRamp(const std::string& name, const Vec3& center,
+                       const Vec3& halfExtents, double baseHeight, double rise,
+                       RampDirection direction);
     void removeStaticBox(const std::string& name);
     void clearStaticBoxes();
 

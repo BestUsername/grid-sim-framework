@@ -54,6 +54,28 @@ TEST(PhysicsWorldTest, AddAndRemoveStaticBox)
     EXPECT_EQ(pw.staticBoxCount(), 0u);
 }
 
+TEST(PhysicsWorldTest, DynamicBodyRestsOnStaticRamp)
+{
+    PhysicsWorld pw(1.0 / 120.0);
+    pw.setMaxSubSteps(0);
+    pw.setGravity({0.0, -10.0, 0.0});
+    pw.addStaticRamp("ramp", {0.0, 0.0, 0.0}, {0.5, 10.0, 0.5},
+                     0.0, 1.0, grid::physics::RampDirection::South);
+
+    CollisionBody ball;
+    ball.name = "ball";
+    ball.position = {0.0, 2.0, 0.25};
+    ball.radius = 0.2;
+    ball.mass = 1.0;
+    ball.motion = grid::physics::BodyMotion::Dynamic;
+    pw.addBody(ball);
+
+    pw.step(1.0);
+    const auto position = pw.simulatedBodyPosition(ball.name);
+    ASSERT_TRUE(position.has_value());
+    EXPECT_GT((*position)[1], 0.7);
+}
+
 TEST(PhysicsWorldTest, UpdateBodyPosition)
 {
     PhysicsWorld pw;
