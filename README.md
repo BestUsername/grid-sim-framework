@@ -116,6 +116,7 @@ grid-sim-framework/
 ## Documentation
 
 - `docs/architecture.md` — architecture overview and source-level decomposition
+- `docs/networking-handover.md` — ownership and synchronization guidance for future network work
 - `docs/mainpage.md` — Doxygen landing page
 - `CONTRIBUTING.md` — contributor setup and expectations
 - `CHANGELOG.md` — staged public-export change history
