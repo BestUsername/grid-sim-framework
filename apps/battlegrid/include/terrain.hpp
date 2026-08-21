@@ -35,8 +35,8 @@ inline double terrainHeight(TerrainType t)
     case TerrainType::SlopeNorth:
     case TerrainType::SlopeSouth:
     case TerrainType::SlopeEast:
-    case TerrainType::SlopeWest: return 0.5;
-    case TerrainType::Hill:     return  1.0;
+    case TerrainType::SlopeWest: return 0.25;
+    case TerrainType::Hill:     return  0.5;
     case TerrainType::Mountain: return  5.0;
     }
     return 0.0;

@@ -65,22 +65,22 @@ void BattleGridWorld::rebuildTerrainColliders()
             switch (terrain) {
             case TerrainType::SlopeNorth:
                 m_physicsWorld.addStaticRamp(
-                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 1.0,
+                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 0.5,
                     grid::physics::RampDirection::North);
                 break;
             case TerrainType::SlopeSouth:
                 m_physicsWorld.addStaticRamp(
-                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 1.0,
+                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 0.5,
                     grid::physics::RampDirection::South);
                 break;
             case TerrainType::SlopeEast:
                 m_physicsWorld.addStaticRamp(
-                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 1.0,
+                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 0.5,
                     grid::physics::RampDirection::East);
                 break;
             case TerrainType::SlopeWest:
                 m_physicsWorld.addStaticRamp(
-                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 1.0,
+                    name, center, {0.5, terrainDepth, 0.5}, 0.0, 0.5,
                     grid::physics::RampDirection::West);
                 break;
             default: {
@@ -226,10 +226,10 @@ void BattleGridWorld::populate(InputMap& inputMap)
     for (auto& v : m_landVehicles)
     {
         COORD chassisPosition = v->location();
-        chassisPosition[1] += 0.35;
+        chassisPosition[1] += LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight;
         registerCollisionBody(v->name(), chassisPosition, Vehicle::kMass, Vehicle::kCollisionRadius,
                               grid::physics::CollisionShape::Box, 1.0,
-                              {0.6, 0.4, 1.1}, 1.0, false, true, false);
+                              {0.6, LandVehicle::kChassisHalfHeight, 1.1}, 1.0, false, true, false);
         registerLandVehicleWheels(*v);
     }
     for (auto& v : m_seaVehicles)
@@ -244,24 +244,28 @@ void BattleGridWorld::populate(InputMap& inputMap)
 
 void BattleGridWorld::registerLandVehicleWheels(const LandVehicle& vehicle)
 {
-    constexpr double wheelRadius = 0.32;
-    constexpr double wheelWidth = 0.20;
     constexpr double wheelMass = 45.0;
-    constexpr double chassisHeight = 0.75;
     constexpr std::array<grid::physics::Vec3, LandVehicle::kWheelCount> anchors{{
-        {-0.70, -0.40,  0.75}, {0.70, -0.40,  0.75},
-        {-0.70, -0.40, -0.75}, {0.70, -0.40, -0.75},
+        {-LandVehicle::kWheelHalfTrack, LandVehicle::kWheelAxleHeight - LandVehicle::kChassisCenterHeight,
+         LandVehicle::kWheelAxleOffset},
+        {LandVehicle::kWheelHalfTrack, LandVehicle::kWheelAxleHeight - LandVehicle::kChassisCenterHeight,
+         LandVehicle::kWheelAxleOffset},
+        {-LandVehicle::kWheelHalfTrack, LandVehicle::kWheelAxleHeight - LandVehicle::kChassisCenterHeight,
+         -LandVehicle::kWheelAxleOffset},
+        {LandVehicle::kWheelHalfTrack, LandVehicle::kWheelAxleHeight - LandVehicle::kChassisCenterHeight,
+         -LandVehicle::kWheelAxleOffset},
     }};
 
     for (std::size_t index = 0; index < anchors.size(); ++index) {
         const auto& anchor = anchors[index];
         COORD wheelPosition{
             vehicle.location()[0] + anchor[0],
-            vehicle.location()[1] + chassisHeight + anchor[1] - wheelRadius,
+            vehicle.location()[1] + LandVehicle::kChassisCenterHeight + anchor[1]
+                - LandVehicle::kWheelRadius,
             vehicle.location()[2] + anchor[2]};
-        registerCollisionBody(vehicle.wheelName(index), wheelPosition, wheelMass, wheelRadius,
+        registerCollisionBody(vehicle.wheelName(index), wheelPosition, wheelMass, LandVehicle::kWheelRadius,
                               grid::physics::CollisionShape::Cylinder, 1.0,
-                              {0.5, 0.5, 0.5}, 1.0, false, false, false, wheelWidth);
+                              {0.5, 0.5, 0.5}, 1.0, false, false, false, LandVehicle::kWheelWidth);
         grid::physics::WheelJoint joint;
         joint.name = vehicle.wheelName(index) + "_suspension";
         joint.chassisName = vehicle.name();

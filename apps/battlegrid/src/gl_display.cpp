@@ -568,8 +568,8 @@ void GLDisplay::drawCube(const Mat4& vp, float x, float y, float z,
 void GLDisplay::drawRamp(const Mat4& vp, float x, float z, TerrainType direction,
                          float r, float g, float b)
 {
-    constexpr float rampAngle = 0.7853981633974483f;
-    constexpr float rampLength = 1.4142135623730951f;
+    constexpr float rampAngle = 0.4636476090008061f;
+    constexpr float rampLength = 1.1180339887498948f;
     Mat4 rotation = identity();
     switch (direction) {
     case TerrainType::SlopeNorth: rotation = rotateX(rampAngle); break;
@@ -581,7 +581,7 @@ void GLDisplay::drawRamp(const Mat4& vp, float x, float z, TerrainType direction
     const bool alongZ = direction == TerrainType::SlopeNorth || direction == TerrainType::SlopeSouth;
     const Mat4 dimensions = alongZ ? scale(1.0f, 0.08f, rampLength)
                                    : scale(rampLength, 0.08f, 1.0f);
-    const Mat4 model = multiply(translate(x, 0.5f, z), multiply(rotation, dimensions));
+    const Mat4 model = multiply(translate(x, 0.25f, z), multiply(rotation, dimensions));
     const Mat4 mvp = multiply(vp, model);
     glUniformMatrix4fv(m_mvpLoc, 1, GL_FALSE, mvp.m);
     glUniform3f(m_colorLoc, r, g, b);
@@ -804,7 +804,7 @@ void GLDisplay::renderFrame(
                 float tileH = (t == TerrainType::Mountain) ? 5.0f :
                               (t == TerrainType::Water)    ? 1.0f :
                               (t == TerrainType::Bump)     ? 0.75f :
-                              (t == TerrainType::Hill)     ? 1.5f : 0.5f;
+                              (t == TerrainType::Hill)     ? 1.0f : 0.5f;
                 float cx = static_cast<float>(x) + 0.5f;
                 float cy = fy - tileH * 0.5f;
                 float cz = static_cast<float>(z) + 0.5f;
@@ -910,13 +910,19 @@ void GLDisplay::renderFrame(
             }
         } else if (landV) {
             if (landV->isDead()) {
-                drawPart(0.0f, 0.2f, 0.0f,  1.2f, 0.3f, 2.2f,
+                drawPart(0.0f, 0.1f, 0.0f,  1.2f, 0.3f, 2.2f,
                          0.4f, 0.4f, 0.4f);
             } else {
-                drawPart(0.0f, 0.5f, 0.0f,   1.2f, 0.8f, 2.2f,
+                drawPart(0.0f, 0.4f, 0.0f,   1.2f, 0.8f, 2.2f,
                          0.4f, 0.45f, 0.25f);                                     // body
-                drawPart(0.0f, 1.1f, 0.1f,   0.5f, 0.3f, 0.5f,
+                drawPart(0.0f, 1.0f, 0.1f,   0.5f, 0.3f, 0.5f,
                          0.35f, 0.38f, 0.22f);                                    // turret
+                for (float x : {-0.70f, 0.70f}) {
+                    for (float z : {-0.75f, 0.75f}) {
+                        drawPart(x, -0.20f, z, 0.20f, 0.64f, 0.64f,
+                                 0.08f, 0.08f, 0.08f);                              // wheel
+                    }
+                }
             }
         } else {
             drawPart(0.0f, 0.5f, 0.0f,   0.5f, 0.5f, 0.5f,

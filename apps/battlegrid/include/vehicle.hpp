@@ -101,6 +101,13 @@ public:
                 const TerrainMap& map, double speed = 10.0);
 
     static constexpr std::size_t kWheelCount = 4;
+    static constexpr double kChassisCenterHeight = 0.95;
+    static constexpr double kChassisHalfHeight = 0.4;
+    static constexpr double kWheelRadius = 0.32;
+    static constexpr double kWheelWidth = 0.20;
+    static constexpr double kWheelAxleHeight = 0.35;
+    static constexpr double kWheelHalfTrack = 0.70;
+    static constexpr double kWheelAxleOffset = 0.75;
     std::string wheelName(std::size_t index) const;
 
 };

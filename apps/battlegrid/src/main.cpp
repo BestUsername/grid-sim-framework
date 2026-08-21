@@ -82,7 +82,7 @@ battlegrid::TerrainMap makeDefaultMap()
     }
 
     // Keep the no-argument demo map comparable to maps/default.map: a
-    // one-metre plateau approached from each side by physical ramp tiles.
+    // half-metre plateau approached from each side by physical ramp tiles.
     map.set(20, 19, battlegrid::TerrainType::SlopeSouth);
     map.set(19, 20, battlegrid::TerrainType::SlopeEast);
     map.set(20, 20, battlegrid::TerrainType::Hill);

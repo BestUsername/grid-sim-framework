@@ -22,9 +22,9 @@ namespace grid::libmap {
  *   - '~'  → SurfaceType::Water
  *   - '.'  → SurfaceType::Land
  *   - ','  → SurfaceType::Land at 0.25m elevation (low navigable bump)
- *   - N/S/E/W → SurfaceType::Land at 0.5m average elevation with a
+ *   - N/S/E/W → SurfaceType::Land at 0.25m average elevation with a
  *                `battlegrid:slope` direction tag
- *   - H → SurfaceType::Land at 1m elevation (low hill plateau)
+ *   - H → SurfaceType::Land at 0.5m elevation (low hill plateau)
  *   - '^'  → SurfaceType::Mountain
  *   - other → SurfaceType::Land (default)
  *

@@ -329,8 +329,9 @@ TEST(BattleGridPhysicsTest, RegistersPeopleAsCapsulesAndSurfaceVehiclesAsHullBox
     ASSERT_NE(landBody, nullptr);
     ASSERT_NE(landVehicle, nullptr);
     EXPECT_EQ(landBody->shape, grid::physics::CollisionShape::Box);
-    EXPECT_EQ(landBody->boxHalfExtents, (grid::physics::Vec3{0.6, 0.4, 1.1}));
-    EXPECT_DOUBLE_EQ(landBody->position[1], 0.75);
+    EXPECT_EQ(landBody->boxHalfExtents,
+              (grid::physics::Vec3{0.6, LandVehicle::kChassisHalfHeight, 1.1}));
+    EXPECT_DOUBLE_EQ(landBody->position[1], LandVehicle::kChassisCenterHeight);
     EXPECT_TRUE(landBody->lockRotation);
     EXPECT_FALSE(landBody->lockYawRotation);
     for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
@@ -338,8 +339,9 @@ TEST(BattleGridPhysicsTest, RegistersPeopleAsCapsulesAndSurfaceVehiclesAsHullBox
         const auto* wheel = world.physicsWorld().body(wheelName);
         ASSERT_NE(wheel, nullptr);
         EXPECT_EQ(wheel->shape, grid::physics::CollisionShape::Cylinder);
-        EXPECT_DOUBLE_EQ(wheel->radius, 0.32);
-        EXPECT_DOUBLE_EQ(wheel->cylinderHeight, 0.20);
+        EXPECT_DOUBLE_EQ(wheel->radius, LandVehicle::kWheelRadius);
+        EXPECT_DOUBLE_EQ(wheel->cylinderHeight, LandVehicle::kWheelWidth);
+        EXPECT_DOUBLE_EQ(wheel->position[1], LandVehicle::kWheelAxleHeight);
         EXPECT_EQ(wheel->motion, grid::physics::BodyMotion::Dynamic);
         EXPECT_FALSE(wheel->lockRotation);
 
@@ -352,7 +354,11 @@ TEST(BattleGridPhysicsTest, RegistersPeopleAsCapsulesAndSurfaceVehiclesAsHullBox
         EXPECT_DOUBLE_EQ(suspension->suspensionHertz, 5.0);
         EXPECT_DOUBLE_EQ(suspension->suspensionDampingRatio, 0.8);
         EXPECT_DOUBLE_EQ(suspension->suspensionTravel, 0.25);
+        EXPECT_DOUBLE_EQ(suspension->chassisAnchor[1],
+                         LandVehicle::kWheelAxleHeight - LandVehicle::kChassisCenterHeight);
     }
+    EXPECT_GT(landBody->position[1] - landBody->boxHalfExtents[1],
+              LandVehicle::kWheelRadius);
 
     ASSERT_NE(seaBody, nullptr);
     EXPECT_EQ(seaBody->shape, grid::physics::CollisionShape::Box);
@@ -427,7 +433,7 @@ TEST(BattleGridMapTest, DefaultMapContainsDriveableSlopedHill)
     EXPECT_EQ(world.physicsWorld().staticBoxCount(), 64u * 64u);
     const auto& hill = world.mapWorld().terrain().get(32, 24);
     EXPECT_EQ(hill.surface, grid::libmap::SurfaceType::Land);
-    EXPECT_FLOAT_EQ(hill.elevation, 1.0f);
+    EXPECT_FLOAT_EQ(hill.elevation, 0.5f);
     EXPECT_EQ(world.mapWorld().terrain().get(32, 23).tags.at("battlegrid:slope"), "S");
 }
 

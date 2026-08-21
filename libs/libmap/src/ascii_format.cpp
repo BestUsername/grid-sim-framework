@@ -25,11 +25,11 @@ static TerrainTile charToTile(char c)
     case 'S':
     case 'E':
     case 'W':
-        tile.elevation = 0.5f;
+        tile.elevation = 0.25f;
         tile.tags.emplace("battlegrid:slope", std::string(1, c));
         break;
     case 'H':
-        tile.elevation = 1.0f;
+        tile.elevation = 0.5f;
         break;
     default:
         break;
@@ -50,7 +50,7 @@ static char tileToChar(const TerrainTile& tile)
                 return direction;
             }
         }
-        return tile.elevation >= 1.0f ? 'H' : tile.elevation > 0.0f ? ',' : '.';
+        return tile.elevation >= 0.5f ? 'H' : tile.elevation > 0.0f ? ',' : '.';
     }
 }
 
