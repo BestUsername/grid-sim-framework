@@ -81,6 +81,7 @@ private:
     void drawCube(const Mat4& vp, float x, float y, float z,
                   float sx, float sy, float sz,
                   float r, float g, float b);
+    void drawWheel(const Mat4& vp, float x, float y, float z, float yaw);
     void drawRamp(const Mat4& vp, float x, float z, TerrainType direction,
                   float r, float g, float b);
     void drawPyramid(const Mat4& vp, float x, float y, float z,
@@ -105,6 +106,8 @@ private:
 
     // Geometry
     uint32_t m_cubeVAO = 0, m_cubeVBO = 0;
+    uint32_t m_cylinderVAO = 0, m_cylinderVBO = 0;
+    int      m_cylinderVertCount = 0;
     uint32_t m_terrainVAO = 0, m_terrainVBO = 0;
     int      m_terrainVertCount = 0;
     uint32_t m_pyramidVAO = 0, m_pyramidVBO = 0;

@@ -471,6 +471,9 @@ TEST(BattleGridPhysicsTest, MountedLandVehicleUsesForwardReverseAndSteeringContr
     EXPECT_DOUBLE_EQ(vehicle->throttle(), 1.0);
     EXPECT_DOUBLE_EQ(vehicle->steering(), -1.0);
     world.stepCollisions(1.0 / 60.0, positions);
+    for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
+        EXPECT_TRUE(positions.contains(vehicle->wheelName(index)));
+    }
     const auto* frontWheel =
         world.physicsWorld().wheelJoint(vehicle->wheelName(0) + "_suspension");
     const auto* rearWheel =

@@ -487,7 +487,7 @@ void BattleGridWorld::submitActorVelocities()
                 steering = -std::clamp(yawError / 0.50, -1.0, 1.0);
             }
         }
-        const double spinSpeed = -throttle * vehicle->speed() / 0.32;
+        const double spinSpeed = -throttle * vehicle->speed() / LandVehicle::kWheelRadius;
         const double steeringAngle = steering * 0.50;
         for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
             const std::string joint = vehicle->wheelName(index) + "_suspension";
@@ -525,7 +525,14 @@ void BattleGridWorld::applySolvedTransforms(
 
     for (const auto& soldier : m_soldiers) apply(soldier, true);
     for (const auto& civilian : m_civilians) apply(civilian, true);
-    for (const auto& vehicle : m_landVehicles) apply(vehicle, true);
+    for (const auto& vehicle : m_landVehicles) {
+        apply(vehicle, true);
+        for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
+            if (const auto wheel = m_physicsWorld.simulatedBodyPosition(vehicle->wheelName(index))) {
+                positions[vehicle->wheelName(index)] = {(*wheel)[0], (*wheel)[1], (*wheel)[2]};
+            }
+        }
+    }
     for (const auto& vehicle : m_seaVehicles) apply(vehicle, true);
     for (const auto& vehicle : m_airVehicles) apply(vehicle, false);
 

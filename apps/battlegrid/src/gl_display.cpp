@@ -188,6 +188,8 @@ GLDisplay::~GLDisplay()
 
     if (m_cubeVAO)    glDeleteVertexArrays(1, &m_cubeVAO);
     if (m_cubeVBO)    glDeleteBuffers(1, &m_cubeVBO);
+    if (m_cylinderVAO) glDeleteVertexArrays(1, &m_cylinderVAO);
+    if (m_cylinderVBO) glDeleteBuffers(1, &m_cylinderVBO);
     if (m_pyramidVAO) glDeleteVertexArrays(1, &m_pyramidVAO);
     if (m_pyramidVBO) glDeleteBuffers(1, &m_pyramidVBO);
     if (m_diamondVAO) glDeleteVertexArrays(1, &m_diamondVAO);
@@ -253,6 +255,39 @@ void GLDisplay::initGeometry()
     glBindVertexArray(m_cubeVAO);
     glBindBuffer(GL_ARRAY_BUFFER, m_cubeVBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(kCubeVerts), kCubeVerts, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+
+    // ── Wheel cylinder VAO ──
+    constexpr int sides = 16;
+    std::vector<float> cylinderVerts;
+    cylinderVerts.reserve(sides * 12 * 3);
+    auto append = [&](float x, float y, float z) {
+        cylinderVerts.push_back(x);
+        cylinderVerts.push_back(y);
+        cylinderVerts.push_back(z);
+    };
+    for (int side = 0; side < sides; ++side) {
+        const float angle0 = 2.0f * std::numbers::pi_v<float> * static_cast<float>(side) / sides;
+        const float angle1 = 2.0f * std::numbers::pi_v<float> * static_cast<float>(side + 1) / sides;
+        const float y0 = 0.5f * std::cos(angle0);
+        const float z0 = 0.5f * std::sin(angle0);
+        const float y1 = 0.5f * std::cos(angle1);
+        const float z1 = 0.5f * std::sin(angle1);
+
+        append(-0.5f, y0, z0); append(0.5f, y0, z0); append(0.5f, y1, z1);
+        append(-0.5f, y0, z0); append(0.5f, y1, z1); append(-0.5f, y1, z1);
+        append(-0.5f, 0.0f, 0.0f); append(-0.5f, y1, z1); append(-0.5f, y0, z0);
+        append(0.5f, 0.0f, 0.0f); append(0.5f, y0, z0); append(0.5f, y1, z1);
+    }
+    m_cylinderVertCount = static_cast<int>(cylinderVerts.size() / 3);
+    glGenVertexArrays(1, &m_cylinderVAO);
+    glGenBuffers(1, &m_cylinderVBO);
+    glBindVertexArray(m_cylinderVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, m_cylinderVBO);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(cylinderVerts.size() * sizeof(float)),
+                 cylinderVerts.data(), GL_STATIC_DRAW);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
     glEnableVertexAttribArray(0);
     glBindVertexArray(0);
@@ -563,6 +598,23 @@ void GLDisplay::drawCube(const Mat4& vp, float x, float y, float z,
     glUniform1f(m_alphaLoc, 1.0f);
     glBindVertexArray(m_cubeVAO);
     glDrawArrays(GL_TRIANGLES, 0, 36);
+}
+
+void GLDisplay::drawWheel(const Mat4& vp, float x, float y, float z, float yaw)
+{
+    constexpr float kHalfPi = 1.5707963267948966f;
+    const Mat4 model = multiply(
+        translate(x, y, z),
+        multiply(rotateY(-yaw + kHalfPi), scale(
+            static_cast<float>(LandVehicle::kWheelWidth),
+            static_cast<float>(2.0 * LandVehicle::kWheelRadius),
+            static_cast<float>(2.0 * LandVehicle::kWheelRadius))));
+    const Mat4 mvp = multiply(vp, model);
+    glUniformMatrix4fv(m_mvpLoc, 1, GL_FALSE, mvp.m);
+    glUniform3f(m_colorLoc, 0.08f, 0.08f, 0.08f);
+    glUniform1f(m_alphaLoc, 1.0f);
+    glBindVertexArray(m_cylinderVAO);
+    glDrawArrays(GL_TRIANGLES, 0, m_cylinderVertCount);
 }
 
 void GLDisplay::drawRamp(const Mat4& vp, float x, float z, TerrainType direction,
@@ -917,10 +969,12 @@ void GLDisplay::renderFrame(
                          0.4f, 0.45f, 0.25f);                                     // body
                 drawPart(0.0f, 1.0f, 0.1f,   0.5f, 0.3f, 0.5f,
                          0.35f, 0.38f, 0.22f);                                    // turret
-                for (float x : {-0.70f, 0.70f}) {
-                    for (float z : {-0.75f, 0.75f}) {
-                        drawPart(x, -0.20f, z, 0.20f, 0.64f, 0.64f,
-                                 0.08f, 0.08f, 0.08f);                              // wheel
+                for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
+                    const auto wheel = positions.find(landV->wheelName(index));
+                    if (wheel != positions.end()) {
+                        drawWheel(vp, static_cast<float>(wheel->second[0]),
+                                  static_cast<float>(wheel->second[1]),
+                                  static_cast<float>(wheel->second[2]), yaw);
                     }
                 }
             }
