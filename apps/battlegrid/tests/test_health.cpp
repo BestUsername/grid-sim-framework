@@ -448,6 +448,14 @@ TEST(BattleGridPhysicsTest, MountedLandVehicleUsesGasBrakeAndSteeringControls)
     EXPECT_LT(rearWheel->driveSpeed, 0.0);
     EXPECT_DOUBLE_EQ(rearWheel->targetSteeringAngle, 0.0);
 
+    const auto start = vehicle->location();
+    for (int step = 0; step < 60; ++step) {
+        world.stepCollisions(1.0 / 60.0, positions);
+    }
+    EXPECT_GT(std::hypot(vehicle->location()[0] - start[0],
+                         vehicle->location()[2] - start[2]),
+              0.1);
+
     input.processEvent(io::KeyEvent{io::Key::W, io::Action::Release});
     input.processEvent(io::KeyEvent{io::Key::A, io::Action::Release});
     input.processEvent(io::KeyEvent{io::Key::S, io::Action::Press});

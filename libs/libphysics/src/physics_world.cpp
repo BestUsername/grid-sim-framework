@@ -215,6 +215,7 @@ struct PhysicsWorld::Backend {
     {
         if (const auto it = wheelJoints.find(name); it != wheelJoints.end()) {
             b3WheelJoint_SetSpinMotorSpeed(it->second, static_cast<float>(spinSpeed));
+            b3Joint_WakeBodies(it->second);
         }
     }
 
@@ -223,6 +224,7 @@ struct PhysicsWorld::Backend {
         if (const auto it = wheelJoints.find(name); it != wheelJoints.end()) {
             b3WheelJoint_SetTargetSteeringAngle(
                 it->second, static_cast<float>(steeringAngle));
+            b3Joint_WakeBodies(it->second);
         }
     }
 
