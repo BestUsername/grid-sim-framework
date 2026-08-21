@@ -402,7 +402,7 @@ TEST(BattleGridMapTest, DefaultMapContainsNavigableSuspensionBumps)
     }
 }
 
-TEST(BattleGridPhysicsTest, MountedLandVehicleUsesGasBrakeAndSteeringControls)
+TEST(BattleGridPhysicsTest, MountedLandVehicleUsesForwardReverseAndSteeringControls)
 {
     BattleGridWorld world;
     world.loadMap(TerrainMap(16, 16, TerrainType::Land));
@@ -434,7 +434,6 @@ TEST(BattleGridPhysicsTest, MountedLandVehicleUsesGasBrakeAndSteeringControls)
     input.processEvent(io::KeyEvent{io::Key::A, io::Action::Press});
     world.playerController().update(1.0 / 60.0, positions);
     EXPECT_DOUBLE_EQ(vehicle->throttle(), 1.0);
-    EXPECT_DOUBLE_EQ(vehicle->brake(), 0.0);
     EXPECT_DOUBLE_EQ(vehicle->steering(), -1.0);
     world.stepCollisions(1.0 / 60.0, positions);
     const auto* frontWheel =
@@ -460,11 +459,10 @@ TEST(BattleGridPhysicsTest, MountedLandVehicleUsesGasBrakeAndSteeringControls)
     input.processEvent(io::KeyEvent{io::Key::A, io::Action::Release});
     input.processEvent(io::KeyEvent{io::Key::S, io::Action::Press});
     world.playerController().update(1.0 / 60.0, positions);
-    EXPECT_DOUBLE_EQ(vehicle->throttle(), 0.0);
-    EXPECT_DOUBLE_EQ(vehicle->brake(), 1.0);
+    EXPECT_DOUBLE_EQ(vehicle->throttle(), -1.0);
     EXPECT_DOUBLE_EQ(vehicle->steering(), 0.0);
     world.stepCollisions(1.0 / 60.0, positions);
-    EXPECT_DOUBLE_EQ(frontWheel->driveSpeed, 0.0);
+    EXPECT_GT(frontWheel->driveSpeed, 0.0);
 }
 
 TEST(BattleGridPhysicsTest, PlayerCanJumpFromDynamicLandVehicleRoof)

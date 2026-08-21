@@ -55,10 +55,9 @@ void PlayerController::update(double dt, const PositionSnapshot& positions)
 
     if (auto* landVehicle = dynamic_cast<LandVehicle*>(m_vehicle)) {
         // Land vehicles use car controls rather than camera-relative walking:
-        // W is gas, S brakes, and A/D steer the front wheels.
+        // W drives forward, S reverses, and A/D steer the front wheels.
         landVehicle->setDrivingControls(
-            std::max(-moveZ, 0.0),
-            std::max(moveZ, 0.0),
+            -moveZ,
             moveX);
         return;
     }

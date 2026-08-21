@@ -42,10 +42,9 @@ public:
     void setMoveTarget(const COORD& target);
     void clearMoveTarget();
     bool hasMoveTarget() const { return m_hasTarget; }
-    /// Set normalized gas, brake, and steering inputs for a driven land vehicle.
-    void setDrivingControls(double throttle, double brake, double steering);
+    /// Set normalized forward/reverse throttle and steering for a driven land vehicle.
+    void setDrivingControls(double throttle, double steering);
     double throttle() const { return m_throttle; }
-    double brake() const { return m_brake; }
     double steering() const { return m_steering; }
     virtual grid::physics::Vec3 movementVelocity() const
     {
@@ -90,7 +89,6 @@ protected:
     double            m_health = kMaxHealth;
     std::array<double, 2> m_movementVelocity{0.0, 0.0};
     double            m_throttle = 0.0;
-    double            m_brake = 0.0;
     double            m_steering = 0.0;
 };
 

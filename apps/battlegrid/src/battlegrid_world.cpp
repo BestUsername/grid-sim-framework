@@ -441,13 +441,11 @@ void BattleGridWorld::submitActorVelocities()
             continue;
         }
         double throttle = vehicle->throttle();
-        double brake = vehicle->brake();
         double steering = vehicle->steering();
         if (!vehicle->hasDriver()) {
             const auto desired = vehicle->movementVelocity();
             const double desiredSpeed = std::hypot(desired[0], desired[2]);
             throttle = std::clamp(desiredSpeed / vehicle->speed(), 0.0, 1.0);
-            brake = desiredSpeed <= 1e-6 ? 1.0 : 0.0;
             if (desiredSpeed > 1e-6) {
                 const double desiredYaw = std::atan2(desired[2], desired[0]);
                 const double yawError = std::remainder(
@@ -457,7 +455,7 @@ void BattleGridWorld::submitActorVelocities()
                 steering = -std::clamp(yawError / 0.50, -1.0, 1.0);
             }
         }
-        const double spinSpeed = brake > 0.0 ? 0.0 : -throttle * vehicle->speed() / 0.32;
+        const double spinSpeed = -throttle * vehicle->speed() / 0.32;
         const double steeringAngle = steering * 0.50;
         for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
             const std::string joint = vehicle->wheelName(index) + "_suspension";
