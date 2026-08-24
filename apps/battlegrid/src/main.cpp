@@ -39,7 +39,6 @@ enum class NetworkMode { Standalone, Server, Client, Headless, Compute };
 struct RemotePlayer {
     std::shared_ptr<battlegrid::Soldier> soldier;
     grid::net::InputSnapshot input;
-    grid::physics::KinematicBody body;
     double yaw   = 0.0;
     double pitch  = 0.3;
     battlegrid::Vehicle* vehicle = nullptr;
@@ -48,7 +47,6 @@ struct RemotePlayer {
 
 /// Apply an InputSnapshot to a remote soldier (mirrors PlayerController logic).
 static void applyRemoteInput(RemotePlayer& rp, double dt,
-                             const battlegrid::TerrainMap& map,
                              battlegrid::BattleGridWorld& world,
                              const PositionSnapshot& positions)
 {
@@ -67,23 +65,15 @@ static void applyRemoteInput(RemotePlayer& rp, double dt,
     rp.prevInteract = in.interact;
     if (interactPressed) {
         if (rp.vehicle) {
-            rp.vehicle->dismount();
-            grid::physics::CollisionBody cb;
-            cb.name = soldier.name();
-            cb.position = {soldier.location()[0], soldier.location()[1], soldier.location()[2]};
-            cb.prevPosition = cb.position;
-            cb.mass = battlegrid::Soldier::kMass;
-            cb.radius = battlegrid::Soldier::kCollisionRadius;
-            world.physicsWorld().addBody(cb);
+            world.dismountSoldier(soldier, *rp.vehicle);
             rp.vehicle = nullptr;
             soldier.setSpeedMultiplier(1.0);
         } else {
             COORD soldierPos = soldier.location();
             battlegrid::Vehicle* v = world.findNearestVehicle(soldierPos, 4.0, positions);
             if (v && !v->hasDriver()) {
-                if (v->mount(&soldier)) {
+                if (world.mountSoldier(soldier, *v)) {
                     rp.vehicle = v;
-                    world.physicsWorld().removeBody(soldier.name());
                 }
             }
         }
@@ -91,56 +81,28 @@ static void applyRemoteInput(RemotePlayer& rp, double dt,
 
     // If mounted, move the vehicle instead
     if (rp.vehicle) {
-        // Vehicle steering uses the same movement logic but at vehicle speed
         double moveX = static_cast<double>(in.moveX);
         double moveZ = static_cast<double>(in.moveZ);
-        bool hasMove = std::abs(moveX) > 0.01 || std::abs(moveZ) > 0.01;
-        if (hasMove) {
-            double len = std::sqrt(moveX * moveX + moveZ * moveZ);
-            if (len > 1.0) { moveX /= len; moveZ /= len; }
-            double cosY = std::cos(rp.yaw);
-            double sinY = std::sin(rp.yaw);
-            double worldX = -moveZ * cosY - moveX * sinY;
-            double worldZ = -moveZ * sinY + moveX * cosY;
-            rp.vehicle->setYaw(std::atan2(worldZ, worldX));
-            double speed = rp.vehicle->speed();
-            double step = speed * dt;
-            const COORD& vpos = rp.vehicle->location();
-            double newX = vpos[0] + worldX * step;
-            double newZ = vpos[2] + worldZ * step;
-
-            // Terrain collision check (mirrors Vehicle::moveTowardTarget)
-            auto sample = map.maxTerrainInRadius(newX, newZ,
-                              battlegrid::Vehicle::kCollisionRadius);
-            double heightDelta = sample.height - vpos[1];
-            auto tcr = battlegrid::resolveTerrainCollision(
-                    heightDelta, battlegrid::Vehicle::kMaxStepUp,
-                    speed, battlegrid::Vehicle::kMass,
-                    battlegrid::terrainObstacleStrength(sample.type));
-
-            switch (tcr.outcome) {
-            case battlegrid::TerrainCollisionOutcome::Pass:
-                break;
-            case battlegrid::TerrainCollisionOutcome::SpeedBump:
-                rp.vehicle->takeDamage(tcr.damage);
-                step *= tcr.speedMultiplier;
-                newX = vpos[0] + worldX * step;
-                newZ = vpos[2] + worldZ * step;
-                break;
-            case battlegrid::TerrainCollisionOutcome::CrashThrough:
-                rp.vehicle->takeDamage(tcr.damage);
-                step *= tcr.speedMultiplier;
-                newX = vpos[0] + worldX * step;
-                newZ = vpos[2] + worldZ * step;
-                break;
-            case battlegrid::TerrainCollisionOutcome::HardStop:
-                rp.vehicle->takeDamage(tcr.damage);
-                // Vehicle does not move.
+        if (auto* landVehicle = dynamic_cast<battlegrid::LandVehicle*>(rp.vehicle)) {
+            landVehicle->setDrivingControls(-moveZ, moveX);
+        } else {
+            const bool hasMove = std::abs(moveX) > 0.01 || std::abs(moveZ) > 0.01;
+            if (!hasMove) {
+                rp.vehicle->clearMoveTarget();
                 return;
             }
-
-            double newY = map.heightAt(newX, newZ);
-            rp.vehicle->set_location(COORD{newX, newY, newZ});
+            const double length = std::hypot(moveX, moveZ);
+            if (length > 1.0) {
+                moveX /= length;
+                moveZ /= length;
+            }
+            const double worldX = -moveZ * std::cos(rp.yaw) - moveX * std::sin(rp.yaw);
+            const double worldZ = -moveZ * std::sin(rp.yaw) + moveX * std::cos(rp.yaw);
+            rp.vehicle->setYaw(std::atan2(worldZ, worldX));
+            rp.vehicle->setMoveTarget(COORD{
+                rp.vehicle->location()[0] + worldX * rp.vehicle->speed(),
+                rp.vehicle->location()[1],
+                rp.vehicle->location()[2] + worldZ * rp.vehicle->speed()});
         }
         return;
     }
@@ -163,29 +125,15 @@ static void applyRemoteInput(RemotePlayer& rp, double dt,
         double speedMul = 1.0 + sprintFactor;
         soldier.setSpeedMultiplier(speedMul);
 
-        const COORD& pos = soldier.location();
-        double speedFactor = battlegrid::terrainSpeedFactor(
-            map.at(static_cast<size_t>(std::max(0.0, pos[0])),
-                   static_cast<size_t>(std::max(0.0, pos[2]))));
-        double step = soldier.speed() * speedMul * speedFactor * dt;
-
-        double newX = pos[0] + worldX * step;
-        double newZ = pos[2] + worldZ * step;
-        double currentH = map.heightAt(pos[0], pos[2]);
-        bool grounded = rp.body.isGrounded(pos[1], currentH);
-
-        if (in.jump) rp.body.tryJump(pos[1], currentH, 8.0);
-        double newGroundH = map.heightAt(newX, newZ);
-        double newY = rp.body.applyGravity(dt, pos[1], newGroundH, 20.0);
-        soldier.set_location(COORD{newX, newY, newZ});
+        soldier.setMovementVelocity(
+            worldX * soldier.speed() * speedMul,
+            worldZ * soldier.speed() * speedMul);
     } else {
-        const COORD& pos = soldier.location();
-        double currentH = map.heightAt(pos[0], pos[2]);
-        if (in.jump) rp.body.tryJump(pos[1], currentH, 8.0);
-        double newY = rp.body.applyGravity(dt, pos[1], currentH, 20.0);
-        soldier.set_location(COORD{pos[0], newY, pos[2]});
+        soldier.setMovementVelocity(0.0, 0.0);
     }
 
+    if (in.jump)
+        soldier.jump();
     if (in.shout)
         soldier.communicate(grid::libsim::Senses::Hearing, "Hey! Over here!");
 }
@@ -503,7 +451,7 @@ int main(int argc, char** argv)
     std::vector<std::shared_ptr<grid::net::Session>> pendingComputeNodes;
     // Latest position data received from compute nodes
     std::mutex computePosMtx;
-    std::unordered_map<std::string, COORD> computePositions;
+    std::unordered_map<std::string, grid::net::AgentSnapshot> computeSnapshots;
 
     if (isServerLike) {
         bridge.hostServer(
@@ -521,11 +469,11 @@ int main(int argc, char** argv)
                     std::lock_guard<std::mutex> lk(pendingMtx);
                     pendingComputeNodes.push_back(session);
                 } else if (msg.type() == grid::net::MessageType::AgentState) {
-                    // Position updates from a compute node
+                    // Solved state updates from a compute node.
                     auto snaps = grid::net::deserializeAgentStates(msg);
                     std::lock_guard<std::mutex> lk(computePosMtx);
                     for (auto& s : snaps) {
-                        computePositions[s.name] = COORD{s.position[0], s.position[1], s.position[2]};
+                        computeSnapshots[s.name] = std::move(s);
                     }
                 }
             },
@@ -669,6 +617,7 @@ int main(int argc, char** argv)
 
         // ── Server / Headless: handle pending connect / disconnect ───
         if (isServerLike) {
+            world.engine().withAgentsLock([&] {
             std::lock_guard<std::mutex> lk(pendingMtx);
 
             // Handle compute node registrations
@@ -759,7 +708,7 @@ int main(int argc, char** argv)
                 s->send(grid::net::serializePlayerAssignment(name));
                 s->send(serializeTerrain(world.terrainMap()));
                 std::lock_guard<std::mutex> rlk(remotesMtx);
-                remotePlayers[s.get()] = {soldier, {}, {}, 0.0, 0.3};
+                remotePlayers[s.get()] = {soldier, {}, 0.0, 0.3};
             }
             pendingConnects.clear();
 
@@ -783,6 +732,7 @@ int main(int argc, char** argv)
                 }
             }
             pendingDisconnects.clear();
+            });
         }
 
         // Drain input events from SDL (only when we have a display)
@@ -826,10 +776,12 @@ int main(int argc, char** argv)
             // or other connected clients).
             {
                 std::lock_guard<std::mutex> lk(clientSnapshotMtx);
-                world.updateFromSnapshots(clientSnapshots);
-                for (auto& s : clientSnapshots) {
-                    positions[s.name] = COORD{s.position[0], s.position[1], s.position[2]};
-                }
+                world.engine().withAgentsLock([&] {
+                    world.updateFromSnapshots(clientSnapshots);
+                    for (auto& s : clientSnapshots) {
+                        positions[s.name] = COORD{s.position[0], s.position[1], s.position[2]};
+                    }
+                });
             }
 
             // Update the local camera to follow our assigned soldier
@@ -896,7 +848,7 @@ int main(int argc, char** argv)
                 if (isServerLike) {
                     std::lock_guard<std::mutex> rlk(remotesMtx);
                     for (auto& [sess, rp] : remotePlayers) {
-                        applyRemoteInput(rp, dt, world.terrainMap(), world, positions);
+                        applyRemoteInput(rp, dt, world, positions);
                         positions[rp.soldier->name()] = rp.soldier->location();
                         if (rp.vehicle)
                             positions[rp.vehicle->name()] = rp.vehicle->location();
@@ -906,16 +858,14 @@ int main(int argc, char** argv)
                 // ── Server / Headless: apply compute node positions ─────
                 if (isServerLike) {
                     std::lock_guard<std::mutex> lk(computePosMtx);
-                    for (auto& [name, pos] : computePositions) {
-                        positions[name] = pos;
-                        // Also set the agent's actual location
-                        for (auto& a : world.engine().getAllAgents()) {
-                            if (a->name() == name) {
-                                a->set_location(pos);
-                                break;
-                            }
-                        }
+                    std::vector<grid::net::AgentSnapshot> snapshots;
+                    snapshots.reserve(computeSnapshots.size());
+                    for (const auto& [name, snapshot] : computeSnapshots) {
+                        snapshots.push_back(snapshot);
+                        positions[name] = COORD{
+                            snapshot.position[0], snapshot.position[1], snapshot.position[2]};
                     }
+                    world.updateFromSnapshots(snapshots);
                 }
 
                 world.stepCollisions(dt, positions);

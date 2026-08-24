@@ -340,7 +340,9 @@ void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
             m_engine, pos, snap.name, faction, m_terrain, 4.5);
         m_engine.addAgent(s);
         m_soldiers.push_back(s);
-        registerCollisionBody(snap.name, pos, Soldier::kMass, Soldier::kCollisionRadius);
+        registerCollisionBody(snap.name, pos, Soldier::kMass, Soldier::kCollisionRadius,
+                              grid::physics::CollisionShape::Capsule, 1.8,
+                              {0.5, 0.5, 0.5}, 1.0, false, true);
         break;
     }
     case EntityType::Civilian: {
@@ -348,7 +350,9 @@ void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
             m_engine, pos, snap.name, m_terrain, 2.5);
         m_engine.addAgent(c);
         m_civilians.push_back(c);
-        registerCollisionBody(snap.name, pos, Civilian::kMass, Civilian::kCollisionRadius);
+        registerCollisionBody(snap.name, pos, Civilian::kMass, Civilian::kCollisionRadius,
+                              grid::physics::CollisionShape::Capsule, 1.6,
+                              {0.5, 0.5, 0.5}, 1.0, false, true);
         break;
     }
     case EntityType::LandVehicle: {
@@ -356,7 +360,12 @@ void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
             m_engine, pos, snap.name, faction, m_terrain, 12.0);
         m_engine.addAgent(v);
         m_landVehicles.push_back(v);
-        registerCollisionBody(snap.name, pos, Vehicle::kMass, Vehicle::kCollisionRadius);
+        COORD chassisPosition = pos;
+        chassisPosition[1] += LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight;
+        registerCollisionBody(snap.name, chassisPosition, Vehicle::kMass, Vehicle::kCollisionRadius,
+                              grid::physics::CollisionShape::Box, 1.0,
+                              {0.6, LandVehicle::kChassisHalfHeight, 1.1}, 1.0, false, true, false);
+        registerLandVehicleWheels(*v);
         break;
     }
     case EntityType::SeaVehicle: {
@@ -364,7 +373,9 @@ void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
             m_engine, pos, snap.name, faction, m_terrain, 14.0);
         m_engine.addAgent(v);
         m_seaVehicles.push_back(v);
-        registerCollisionBody(snap.name, pos, Vehicle::kMass, Vehicle::kCollisionRadius);
+        registerCollisionBody(snap.name, pos, Vehicle::kMass, Vehicle::kCollisionRadius,
+                              grid::physics::CollisionShape::Box, 1.0,
+                              {0.4, 0.3, 1.0}, 1.0, false, true, false);
         break;
     }
     case EntityType::AirVehicle: {
@@ -372,7 +383,9 @@ void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
             m_engine, pos, snap.name, faction, m_terrain, 22.0, 20.0);
         m_engine.addAgent(v);
         m_airVehicles.push_back(v);
-        registerCollisionBody(snap.name, pos, Vehicle::kMass, Vehicle::kCollisionRadius);
+        registerCollisionBody(snap.name, pos, Vehicle::kMass, Vehicle::kCollisionRadius,
+                              grid::physics::CollisionShape::Sphere, 1.0,
+                              {0.5, 0.5, 0.5}, v->gravityScale());
         break;
     }
     }
@@ -382,19 +395,73 @@ void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
 bool BattleGridWorld::setAgentRemoteOwned(const std::string& name, bool owned)
 {
     for (auto& s : m_soldiers) {
-        if (s->name() == name) { s->setRemoteOwned(owned); return true; }
+        if (s->name() == name) {
+            s->setRemoteOwned(owned);
+            if (owned) {
+                m_physicsWorld.removeBody(name);
+            } else if (!m_physicsWorld.body(name)) {
+                registerCollisionBody(name, s->location(), Soldier::kMass, Soldier::kCollisionRadius,
+                                      grid::physics::CollisionShape::Capsule, 1.8,
+                                      {0.5, 0.5, 0.5}, 1.0, false, true);
+            }
+            return true;
+        }
     }
     for (auto& c : m_civilians) {
-        if (c->name() == name) { c->setRemoteOwned(owned); return true; }
+        if (c->name() == name) {
+            c->setRemoteOwned(owned);
+            if (owned) {
+                m_physicsWorld.removeBody(name);
+            } else if (!m_physicsWorld.body(name)) {
+                registerCollisionBody(name, c->location(), Civilian::kMass, Civilian::kCollisionRadius,
+                                      grid::physics::CollisionShape::Capsule, 1.6,
+                                      {0.5, 0.5, 0.5}, 1.0, false, true);
+            }
+            return true;
+        }
     }
     for (auto& v : m_landVehicles) {
-        if (v->name() == name) { v->setRemoteOwned(owned); return true; }
+        if (v->name() == name) {
+            v->setRemoteOwned(owned);
+            if (owned) {
+                removeLandVehicleWheels(*v);
+                m_physicsWorld.removeBody(name);
+            } else if (!m_physicsWorld.body(name)) {
+                COORD chassisPosition = v->location();
+                chassisPosition[1] += LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight;
+                registerCollisionBody(name, chassisPosition, Vehicle::kMass, Vehicle::kCollisionRadius,
+                                      grid::physics::CollisionShape::Box, 1.0,
+                                      {0.6, LandVehicle::kChassisHalfHeight, 1.1}, 1.0, false, true, false);
+                registerLandVehicleWheels(*v);
+            }
+            return true;
+        }
     }
     for (auto& v : m_seaVehicles) {
-        if (v->name() == name) { v->setRemoteOwned(owned); return true; }
+        if (v->name() == name) {
+            v->setRemoteOwned(owned);
+            if (owned) {
+                m_physicsWorld.removeBody(name);
+            } else if (!m_physicsWorld.body(name)) {
+                registerCollisionBody(name, v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
+                                      grid::physics::CollisionShape::Box, 1.0,
+                                      {0.4, 0.3, 1.0}, 1.0, false, true, false);
+            }
+            return true;
+        }
     }
     for (auto& v : m_airVehicles) {
-        if (v->name() == name) { v->setRemoteOwned(owned); return true; }
+        if (v->name() == name) {
+            v->setRemoteOwned(owned);
+            if (owned) {
+                m_physicsWorld.removeBody(name);
+            } else if (!m_physicsWorld.body(name)) {
+                registerCollisionBody(name, v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
+                                      grid::physics::CollisionShape::Sphere, 1.0,
+                                      {0.5, 0.5, 0.5}, v->gravityScale());
+            }
+            return true;
+        }
     }
     return false;
 }
@@ -408,6 +475,7 @@ void BattleGridWorld::updateFromSnapshots(
         // Try to update existing soldiers
         for (auto& s : m_soldiers) {
             if (s->name() == snap.name) {
+                s->set_location(COORD{snap.position[0], snap.position[1], snap.position[2]});
                 s->setYaw(snap.yaw);
                 s->setHealth(snap.health);
                 found = true;
@@ -419,6 +487,7 @@ void BattleGridWorld::updateFromSnapshots(
         // Try civilians
         for (auto& c : m_civilians) {
             if (c->name() == snap.name) {
+                c->set_location(COORD{snap.position[0], snap.position[1], snap.position[2]});
                 c->setYaw(snap.yaw);
                 c->setHealth(snap.health);
                 found = true;
@@ -431,6 +500,7 @@ void BattleGridWorld::updateFromSnapshots(
         auto updateVehicle = [&](auto& list) -> bool {
             for (auto& v : list) {
                 if (v->name() == snap.name) {
+                    v->set_location(COORD{snap.position[0], snap.position[1], snap.position[2]});
                     v->setYaw(snap.yaw);
                     v->setHealth(snap.health);
                     return true;
