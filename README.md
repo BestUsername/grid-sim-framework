@@ -137,6 +137,23 @@ Distributed modes:
 ./build/bin/demo_net_bridge
 ```
 
+### Ability and distributed-physics testing
+
+`apps/battlegrid/maps/all-abilities.map` has water, land, bumps, every ramp
+direction, a hill, and mountains for manual testing of movement, jumping,
+mounting/dismounting, driving, and terrain collision:
+
+```bash
+./build/bin/battlegrid --map apps/battlegrid/maps/all-abilities.map
+```
+
+Run the automated Box3D and networking test suite plus a headless
+server/compute-node handoff with:
+
+```bash
+./scripts/e2e-network-physics.sh
+```
+
 Controls include:
 
 - `W/A/S/D` move
