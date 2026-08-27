@@ -113,6 +113,13 @@ bool BattleGridWorld::loadMap(const std::string& mapPath)
     grid::libmap::AsciiMapFormat fmt;
     auto maybeWorld = fmt.readFromFile(mapPath);
     m_mapWorld = maybeWorld ? std::move(*maybeWorld) : terrainMapToMapWorld(m_terrain);
+    for (size_t z = 0; z < m_terrain.height(); ++z) {
+        for (size_t x = 0; x < m_terrain.width(); ++x) {
+            auto tile = m_mapWorld.terrain().get(x, z);
+            tile.elevation = static_cast<float>(terrainHeight(m_terrain.at(x, z)));
+            m_mapWorld.terrain().set(x, z, tile);
+        }
+    }
     rebuildTerrainColliders();
 
     std::cout << "Map loaded: " << m_terrain.width() << "x" << m_terrain.height() << "\n";
@@ -272,9 +279,9 @@ void BattleGridWorld::registerLandVehicleWheels(const LandVehicle& vehicle)
         joint.wheelName = vehicle.wheelName(index);
         joint.chassisAnchor = anchor;
         joint.steering = index < 2;
-        joint.suspensionHertz = 5.0;
-        joint.suspensionDampingRatio = 0.8;
-        joint.suspensionTravel = 0.25;
+        joint.suspensionHertz = LandVehicle::kSuspensionHertz;
+        joint.suspensionDampingRatio = LandVehicle::kSuspensionDampingRatio;
+        joint.suspensionTravel = LandVehicle::kSuspensionTravel;
         joint.maxDriveTorque = 3000.0;
         joint.maxSteeringTorque = 1600.0;
         joint.steeringLimit = 0.50;

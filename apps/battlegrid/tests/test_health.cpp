@@ -351,9 +351,9 @@ TEST(BattleGridPhysicsTest, RegistersPeopleAsCapsulesAndSurfaceVehiclesAsHullBox
         EXPECT_EQ(suspension->chassisName, landVehicle->name());
         EXPECT_EQ(suspension->wheelName, wheelName);
         EXPECT_EQ(suspension->steering, index < 2);
-        EXPECT_DOUBLE_EQ(suspension->suspensionHertz, 5.0);
-        EXPECT_DOUBLE_EQ(suspension->suspensionDampingRatio, 0.8);
-        EXPECT_DOUBLE_EQ(suspension->suspensionTravel, 0.25);
+        EXPECT_DOUBLE_EQ(suspension->suspensionHertz, LandVehicle::kSuspensionHertz);
+        EXPECT_DOUBLE_EQ(suspension->suspensionDampingRatio, LandVehicle::kSuspensionDampingRatio);
+        EXPECT_DOUBLE_EQ(suspension->suspensionTravel, LandVehicle::kSuspensionTravel);
         EXPECT_DOUBLE_EQ(suspension->chassisAnchor[1],
                          LandVehicle::kWheelAxleHeight - LandVehicle::kChassisCenterHeight);
     }
@@ -386,7 +386,8 @@ TEST(BattleGridMapTest, DefaultMapContainsNavigableSuspensionBumps)
         for (std::size_t x = 0; x < map.width(); ++x) {
             if (map.at(x, z) == TerrainType::Bump) {
                 ++bumps;
-                EXPECT_DOUBLE_EQ(map.heightAt(static_cast<double>(x), static_cast<double>(z)), 0.25);
+                EXPECT_DOUBLE_EQ(map.heightAt(static_cast<double>(x), static_cast<double>(z)),
+                                 kBumpHeight);
             }
         }
     }
@@ -401,7 +402,7 @@ TEST(BattleGridMapTest, DefaultMapContainsNavigableSuspensionBumps)
             if (map.at(x, z) == TerrainType::Bump) {
                 const auto& tile = world.mapWorld().terrain().get(x, z);
                 EXPECT_EQ(tile.surface, grid::libmap::SurfaceType::Land);
-                EXPECT_FLOAT_EQ(tile.elevation, 0.25f);
+                EXPECT_FLOAT_EQ(tile.elevation, static_cast<float>(kBumpHeight));
                 return;
             }
         }

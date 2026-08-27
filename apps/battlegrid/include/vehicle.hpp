@@ -108,6 +108,9 @@ public:
     static constexpr double kWheelAxleHeight = kWheelRadius;
     static constexpr double kWheelHalfTrack = 0.70;
     static constexpr double kWheelAxleOffset = 0.75;
+    static constexpr double kSuspensionHertz = 8.0;
+    static constexpr double kSuspensionDampingRatio = 1.0;
+    static constexpr double kSuspensionTravel = 0.15;
     std::string wheelName(std::size_t index) const;
 
 };

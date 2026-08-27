@@ -8,6 +8,8 @@
 
 namespace battlegrid {
 
+inline constexpr double kBumpHeight = 0.10;
+
 enum class TerrainType : char {
     Water    = '~',
     Land     = '.',
@@ -31,7 +33,7 @@ inline double terrainHeight(TerrainType t)
     switch (t) {
     case TerrainType::Water:    return -2.0;
     case TerrainType::Land:     return  0.0;
-    case TerrainType::Bump:     return  0.25;
+    case TerrainType::Bump:     return  kBumpHeight;
     case TerrainType::SlopeNorth:
     case TerrainType::SlopeSouth:
     case TerrainType::SlopeEast:

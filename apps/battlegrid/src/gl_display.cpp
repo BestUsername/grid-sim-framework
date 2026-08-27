@@ -276,8 +276,8 @@ void GLDisplay::initGeometry()
         const float y1 = 0.5f * std::cos(angle1);
         const float z1 = 0.5f * std::sin(angle1);
 
-        append(-0.5f, y0, z0); append(0.5f, y0, z0); append(0.5f, y1, z1);
-        append(-0.5f, y0, z0); append(0.5f, y1, z1); append(-0.5f, y1, z1);
+        append(-0.5f, y0, z0); append(0.5f, y1, z1); append(0.5f, y0, z0);
+        append(-0.5f, y0, z0); append(-0.5f, y1, z1); append(0.5f, y1, z1);
         append(-0.5f, 0.0f, 0.0f); append(-0.5f, y1, z1); append(-0.5f, y0, z0);
         append(0.5f, 0.0f, 0.0f); append(0.5f, y0, z0); append(0.5f, y1, z1);
     }
