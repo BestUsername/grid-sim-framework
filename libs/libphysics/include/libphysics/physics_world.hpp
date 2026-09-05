@@ -100,6 +100,8 @@ public:
 
     /// Set the Box3D velocity for a dynamic body.
     void setSimulatedBodyVelocity(const std::string& name, const Vec3& velocity);
+    /// Apply a one-shot linear impulse to a dynamic body.
+    bool applySimulatedBodyImpulse(const std::string& name, const Vec3& impulse);
     std::optional<Vec3> simulatedBodyVelocity(const std::string& name) const;
     /// Steer an upright body's yaw in radians without teleporting it.
     /// Returns false if the body does not exist or @p yaw is not finite.

@@ -351,6 +351,19 @@ struct PhysicsWorld::Backend {
         }
     }
 
+    bool applyImpulse(const std::string& name, const Vec3& impulse)
+    {
+        const auto it = bodies.find(name);
+        if (it == bodies.end()) {
+            return false;
+        }
+        b3Body_ApplyLinearImpulseToCenter(
+            it->second,
+            {static_cast<float>(impulse[0]), static_cast<float>(impulse[1]), static_cast<float>(impulse[2])},
+            true);
+        return true;
+    }
+
     std::optional<Vec3> velocity(const std::string& name) const
     {
         const auto it = bodies.find(name);
@@ -598,6 +611,13 @@ std::optional<Vec3> PhysicsWorld::simulatedBodyPosition(const std::string& name)
 void PhysicsWorld::setSimulatedBodyVelocity(const std::string& name, const Vec3& velocity)
 {
     m_backend->setVelocity(name, velocity);
+}
+
+bool PhysicsWorld::applySimulatedBodyImpulse(const std::string& name, const Vec3& impulse)
+{
+    const auto it = m_bodies.find(name);
+    return it != m_bodies.end() && it->second.motion == BodyMotion::Dynamic
+        && m_backend->applyImpulse(name, impulse);
 }
 
 std::optional<Vec3> PhysicsWorld::simulatedBodyVelocity(const std::string& name) const

@@ -294,6 +294,36 @@ inline std::vector<AgentSnapshot> deserializeAgentAssignment(const Message& msg)
     return deserializeAgentStates(msg);
 }
 
+struct CollisionCorrection {
+    std::string targetName;
+    std::array<double, 3> impulse{};
+};
+
+inline Message serializeCollisionCorrection(const CollisionCorrection& correction) {
+    std::vector<uint8_t> buf;
+    detail::packString(buf, correction.targetName);
+    detail::packDouble(buf, correction.impulse[0]);
+    detail::packDouble(buf, correction.impulse[1]);
+    detail::packDouble(buf, correction.impulse[2]);
+    return Message(MessageType::CollisionCorrection, std::move(buf));
+}
+
+inline CollisionCorrection deserializeCollisionCorrection(const Message& msg) {
+    if (msg.payload().size() < 2 + 3 * sizeof(double)) {
+        throw std::invalid_argument("invalid CollisionCorrection payload size");
+    }
+    const uint8_t* p = msg.payload().data();
+    CollisionCorrection correction;
+    correction.targetName = detail::unpackString(p);
+    if (msg.payload().size() != 2 + correction.targetName.size() + 3 * sizeof(double)) {
+        throw std::invalid_argument("invalid CollisionCorrection payload size");
+    }
+    correction.impulse[0] = detail::unpackDouble(p);
+    correction.impulse[1] = detail::unpackDouble(p);
+    correction.impulse[2] = detail::unpackDouble(p);
+    return correction;
+}
+
 } // namespace grid::net
 
 #endif // GRID_NET_SERIALIZER_HPP_INCLUDED

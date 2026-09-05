@@ -541,6 +541,8 @@ int main(int argc, char** argv)
     std::mutex assignmentMtx;
     std::vector<grid::net::AgentSnapshot> pendingAssignments;
     std::atomic<bool> assignmentsReceived{false};
+    std::mutex correctionMtx;
+    std::vector<grid::net::CollisionCorrection> pendingCorrections;
 
     if (networkMode == NetworkMode::Client) {
         bridge.connectToServer(clientHost, clientPort,
@@ -596,6 +598,10 @@ int main(int argc, char** argv)
                     assignmentsReceived = true;
                     std::cout << "[Compute] Received " << pendingAssignments.size()
                               << " agent assignments.\n";
+                } else if (msg.type() == grid::net::MessageType::CollisionCorrection) {
+                    auto correction = grid::net::deserializeCollisionCorrection(msg);
+                    std::lock_guard<std::mutex> lk(correctionMtx);
+                    pendingCorrections.push_back(std::move(correction));
                 }
             });
 
@@ -636,6 +642,19 @@ int main(int argc, char** argv)
     size_t lastLogIndex = 0; // track how many log entries we've printed
     size_t serverLogSentIndex = 0; // server: track how many log entries sent to clients
     battlegrid::SenseIndicatorManager senseIndicators;
+    if (isServerLike) {
+        world.setCollisionCorrectionHandler(
+            [&](const std::string& targetName, const grid::physics::Vec3& impulse) {
+                std::lock_guard<std::mutex> lk(computeMtx);
+                for (const auto& [session, node] : computeNodes) {
+                    if (std::find(node.ownedAgents.begin(), node.ownedAgents.end(), targetName)
+                        != node.ownedAgents.end()) {
+                        node.session->send(grid::net::serializeCollisionCorrection({targetName, impulse}));
+                        return;
+                    }
+                }
+            });
+    }
 
     // ── SIGINT handler for headless / compute graceful shutdown ──────
     static std::atomic<bool> g_quit{false};
@@ -920,6 +939,11 @@ int main(int argc, char** argv)
         // Compute nodes run their own collision step
         if (networkMode == NetworkMode::Compute) {
             world.engine().withAgentsLock([&] {
+                std::lock_guard<std::mutex> lk(correctionMtx);
+                for (const auto& correction : pendingCorrections) {
+                    world.applyCollisionCorrection(correction.targetName, correction.impulse);
+                }
+                pendingCorrections.clear();
                 world.stepCollisions(dt, positions);
             });
         }

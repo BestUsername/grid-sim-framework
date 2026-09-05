@@ -136,6 +136,21 @@ TEST(PhysicsWorldTest, DynamicBodyAdvancesFromSimulatedVelocity)
     EXPECT_FALSE(pw.simulatedBodyVelocity("missing").has_value());
 }
 
+TEST(PhysicsWorldTest, AppliedImpulseChangesDynamicBodyVelocity)
+{
+    PhysicsWorld pw;
+    CollisionBody body;
+    body.name = "dynamic";
+    body.mass = 10.0;
+    body.motion = grid::physics::BodyMotion::Dynamic;
+    pw.addBody(body);
+
+    ASSERT_TRUE(pw.applySimulatedBodyImpulse(body.name, {50.0, 0.0, 0.0}));
+    const auto velocity = pw.simulatedBodyVelocity(body.name);
+    ASSERT_TRUE(velocity.has_value());
+    EXPECT_NEAR((*velocity)[0], 5.0, 1e-6);
+}
+
 TEST(PhysicsWorldTest, SettingHullYawPreservesPositionAndVelocity)
 {
     PhysicsWorld pw;

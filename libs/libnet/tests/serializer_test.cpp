@@ -106,6 +106,14 @@ TEST(SerializerTest, RejectsInvalidInputSnapshotPayloadSize) {
     EXPECT_THROW(deserializeInputSnapshot(truncated), std::invalid_argument);
 }
 
+TEST(SerializerTest, CollisionCorrectionRoundTrip) {
+    CollisionCorrection correction{"civilian_2", {120.0, 0.0, -45.0}};
+
+    const auto decoded = deserializeCollisionCorrection(serializeCollisionCorrection(correction));
+    EXPECT_EQ(decoded.targetName, correction.targetName);
+    EXPECT_EQ(decoded.impulse, correction.impulse);
+}
+
 TEST(SerializerTest, ControlRoundTrip) {
     auto msg = serializeControl(ControlCode::Pause);
     auto decoded = deserializeControl(msg);

@@ -17,6 +17,7 @@
 #include "libnet/serializer.hpp"
 
 #include <memory>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -88,6 +89,13 @@ public:
 
     /// Mark an agent as remote-owned by name.  Returns true if found.
     bool setAgentRemoteOwned(const std::string& name, bool owned);
+    /// Apply a server-authorized cross-node collision impulse to a local owner.
+    bool applyCollisionCorrection(const std::string& name, const grid::physics::Vec3& impulse);
+    void setCollisionCorrectionHandler(
+        std::function<void(const std::string&, const grid::physics::Vec3&)> handler)
+    {
+        m_collisionCorrectionHandler = std::move(handler);
+    }
 
     /// Access the physics world (e.g. to change simulation mode).
     grid::physics::PhysicsWorld& physicsWorld() { return m_physicsWorld; }
@@ -115,6 +123,8 @@ private:
     TerrainMap   m_terrain;
     grid::libmap::MapWorld m_mapWorld;
     grid::physics::PhysicsWorld m_physicsWorld;
+    std::function<void(const std::string&, const grid::physics::Vec3&)> m_collisionCorrectionHandler;
+    std::unordered_map<std::string, grid::physics::Vec3> m_pendingCollisionImpulses;
 
     std::shared_ptr<Soldier> m_playerSoldier;
     std::unique_ptr<PlayerController> m_playerController;

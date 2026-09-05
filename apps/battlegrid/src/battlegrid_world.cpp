@@ -519,6 +519,19 @@ bool BattleGridWorld::setAgentRemoteOwned(const std::string& name, bool owned)
     return false;
 }
 
+bool BattleGridWorld::applyCollisionCorrection(
+    const std::string& name, const grid::physics::Vec3& impulse)
+{
+    if (!m_physicsWorld.body(name)) {
+        return false;
+    }
+    auto& pending = m_pendingCollisionImpulses[name];
+    pending[0] += impulse[0];
+    pending[1] += impulse[1];
+    pending[2] += impulse[2];
+    return true;
+}
+
 void BattleGridWorld::updateFromSnapshots(
     const std::vector<grid::net::AgentSnapshot>& snapshots)
 {
@@ -854,6 +867,10 @@ void BattleGridWorld::stepCollisions(double dt,
 {
     retireDestroyedLandVehicles();
     submitActorVelocities();
+    for (const auto& [name, impulse] : m_pendingCollisionImpulses) {
+        m_physicsWorld.applySimulatedBodyImpulse(name, impulse);
+    }
+    m_pendingCollisionImpulses.clear();
     for (const auto& vehicle : m_seaVehicles) {
         m_physicsWorld.setSimulatedBodyYaw(vehicle->name(), vehicle->desiredYaw());
     }
@@ -889,6 +906,26 @@ void BattleGridWorld::stepCollisions(double dt,
             m_engine.getGameLog().log(
                 localName, "", grid::libsim::Senses::Touch,
                 "Collided with " + remoteName + "!");
+            if (m_collisionCorrectionHandler) {
+                const bool remoteIsA = remoteName == col.nameA;
+                const auto localVelocity = remoteIsA
+                    ? grid::physics::Vec3{-col.relativeVelocity[0], -col.relativeVelocity[1],
+                                          -col.relativeVelocity[2]}
+                    : col.relativeVelocity;
+                const double approachSpeed = std::max(
+                    0.0, localVelocity[0] * (remoteIsA ? -col.normal[0] : col.normal[0])
+                        + localVelocity[1] * (remoteIsA ? -col.normal[1] : col.normal[1])
+                        + localVelocity[2] * (remoteIsA ? -col.normal[2] : col.normal[2]));
+                const auto* localBody = m_physicsWorld.body(localName);
+                const double impulse = std::max(col.impulse, approachSpeed * (localBody ? localBody->mass : 0.0));
+                if (impulse > 0.0) {
+                    const double direction = remoteIsA ? -1.0 : 1.0;
+                    m_collisionCorrectionHandler(remoteName, {
+                        direction * col.normal[0] * impulse,
+                        direction * col.normal[1] * impulse,
+                        direction * col.normal[2] * impulse});
+                }
+            }
             continue;
         }
 
