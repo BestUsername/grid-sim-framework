@@ -11,6 +11,7 @@
 
 #include "libio/sdl_keymap.hpp"
 
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <sstream>
@@ -995,6 +996,22 @@ void GLDisplay::renderFrame(
                         drawWheel(vp, static_cast<float>(wheel->second[0]),
                                   static_cast<float>(wheel->second[1]),
                                   static_cast<float>(wheel->second[2]), yaw);
+                    } else {
+                        constexpr std::array<std::array<float, 2>, LandVehicle::kWheelCount> kWheelOffsets{{
+                            {-static_cast<float>(LandVehicle::kWheelHalfTrack),
+                              static_cast<float>(LandVehicle::kWheelAxleOffset)},
+                            {static_cast<float>(LandVehicle::kWheelHalfTrack),
+                              static_cast<float>(LandVehicle::kWheelAxleOffset)},
+                            {-static_cast<float>(LandVehicle::kWheelHalfTrack),
+                             -static_cast<float>(LandVehicle::kWheelAxleOffset)},
+                            {static_cast<float>(LandVehicle::kWheelHalfTrack),
+                             -static_cast<float>(LandVehicle::kWheelAxleOffset)},
+                        }};
+                        const auto [localX, localZ] = kWheelOffsets[index];
+                        const float wheelX = ax + localZ * std::cos(yaw) + localX * std::sin(yaw);
+                        const float wheelZ = az + localZ * std::sin(yaw) - localX * std::cos(yaw);
+                        drawWheel(vp, wheelX, ay + static_cast<float>(LandVehicle::kWheelAxleHeight),
+                                  wheelZ, yaw);
                     }
                 }
             }

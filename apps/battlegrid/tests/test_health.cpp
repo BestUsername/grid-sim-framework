@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <numbers>
 
@@ -509,6 +510,11 @@ TEST(BattleGridPhysicsTest, RemoteOwnedSoldierUsesSnapshotDrivenCollisionProxy)
     }
 
     EXPECT_LT(world.playerSoldier().location()[0], 0.5);
+    const auto logEntries = world.engine().getGameLog().getEntries();
+    EXPECT_TRUE(std::any_of(logEntries.begin(), logEntries.end(), [&](const auto& entry) {
+        return entry.source == world.playerSoldier().name()
+            && entry.message == "Collided with " + remoteSoldier->name() + "!";
+    }));
 }
 
 TEST(BattleGridPhysicsTest, VehicleSnapshotsUpdateRenderedYaw)

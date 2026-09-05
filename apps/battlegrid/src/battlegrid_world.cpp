@@ -884,6 +884,11 @@ void BattleGridWorld::stepCollisions(double dt,
         // proxy. It blocks server-owned actors, but cannot author local
         // collision gameplay because its compute owner has the real body.
         if (isRemoteOwned(col.nameA) || isRemoteOwned(col.nameB)) {
+            const std::string& localName = isRemoteOwned(col.nameA) ? col.nameB : col.nameA;
+            const std::string& remoteName = isRemoteOwned(col.nameA) ? col.nameA : col.nameB;
+            m_engine.getGameLog().log(
+                localName, "", grid::libsim::Senses::Touch,
+                "Collided with " + remoteName + "!");
             continue;
         }
 
