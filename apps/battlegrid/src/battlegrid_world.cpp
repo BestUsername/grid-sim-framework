@@ -429,6 +429,10 @@ bool BattleGridWorld::setAgentRemoteOwned(const std::string& name, bool owned)
             s->setRemoteOwned(owned);
             if (owned) {
                 m_physicsWorld.removeBody(name);
+                registerCollisionBody(name, s->location(), Soldier::kMass, Soldier::kCollisionRadius,
+                                      grid::physics::CollisionShape::Capsule, 1.8,
+                                      {0.5, 0.5, 0.5}, 1.0, false, true, true, 0.3, false,
+                                      grid::physics::BodyMotion::Kinematic);
             } else if (!m_physicsWorld.body(name)) {
                 registerCollisionBody(name, s->location(), Soldier::kMass, Soldier::kCollisionRadius,
                                       grid::physics::CollisionShape::Capsule, 1.8,
@@ -442,6 +446,10 @@ bool BattleGridWorld::setAgentRemoteOwned(const std::string& name, bool owned)
             c->setRemoteOwned(owned);
             if (owned) {
                 m_physicsWorld.removeBody(name);
+                registerCollisionBody(name, c->location(), Civilian::kMass, Civilian::kCollisionRadius,
+                                      grid::physics::CollisionShape::Capsule, 1.6,
+                                      {0.5, 0.5, 0.5}, 1.0, false, true, true, 0.3, false,
+                                      grid::physics::BodyMotion::Kinematic);
             } else if (!m_physicsWorld.body(name)) {
                 registerCollisionBody(name, c->location(), Civilian::kMass, Civilian::kCollisionRadius,
                                       grid::physics::CollisionShape::Capsule, 1.6,
@@ -456,6 +464,12 @@ bool BattleGridWorld::setAgentRemoteOwned(const std::string& name, bool owned)
             if (owned) {
                 removeLandVehicleWheels(*v);
                 m_physicsWorld.removeBody(name);
+                COORD chassisPosition = v->location();
+                chassisPosition[1] += LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight;
+                registerCollisionBody(name, chassisPosition, Vehicle::kMass, Vehicle::kCollisionRadius,
+                                      grid::physics::CollisionShape::Box, 1.0,
+                                      {0.6, LandVehicle::kChassisHalfHeight, 1.1}, 1.0, false, true, false,
+                                      0.3, false, grid::physics::BodyMotion::Kinematic);
             } else if (!m_physicsWorld.body(name)) {
                 COORD chassisPosition = v->location();
                 chassisPosition[1] += LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight;
@@ -473,6 +487,10 @@ bool BattleGridWorld::setAgentRemoteOwned(const std::string& name, bool owned)
             v->setRemoteOwned(owned);
             if (owned) {
                 m_physicsWorld.removeBody(name);
+                registerCollisionBody(name, v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
+                                      grid::physics::CollisionShape::Box, 1.0,
+                                      {0.4, 0.3, 1.0}, 1.0, false, true, false, 0.3, false,
+                                      grid::physics::BodyMotion::Kinematic);
             } else if (!m_physicsWorld.body(name)) {
                 registerCollisionBody(name, v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
                                       grid::physics::CollisionShape::Box, 1.0,
@@ -486,6 +504,10 @@ bool BattleGridWorld::setAgentRemoteOwned(const std::string& name, bool owned)
             v->setRemoteOwned(owned);
             if (owned) {
                 m_physicsWorld.removeBody(name);
+                registerCollisionBody(name, v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
+                                      grid::physics::CollisionShape::Sphere, 1.0,
+                                      {0.5, 0.5, 0.5}, 0.0, false, true, true, 0.3, false,
+                                      grid::physics::BodyMotion::Kinematic);
             } else if (!m_physicsWorld.body(name)) {
                 registerCollisionBody(name, v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
                                       grid::physics::CollisionShape::Sphere, 1.0,
@@ -500,6 +522,18 @@ bool BattleGridWorld::setAgentRemoteOwned(const std::string& name, bool owned)
 void BattleGridWorld::updateFromSnapshots(
     const std::vector<grid::net::AgentSnapshot>& snapshots)
 {
+    const auto syncRemoteBody = [&](const auto& actor, const grid::net::AgentSnapshot& snap,
+                                    double rootOffset = 0.0) {
+        if (!actor->isRemoteOwned()) {
+            return;
+        }
+        if (const auto* body = m_physicsWorld.body(actor->name())) {
+            m_physicsWorld.updateBodyPosition(
+                actor->name(), snap.position[0],
+                snap.position[1] + shapeBottomOffset(*body) + rootOffset, snap.position[2]);
+        }
+    };
+
     for (auto& snap : snapshots) {
         bool found = false;
 
@@ -509,6 +543,7 @@ void BattleGridWorld::updateFromSnapshots(
                 s->set_location(COORD{snap.position[0], snap.position[1], snap.position[2]});
                 s->setYaw(snap.yaw);
                 s->setHealth(snap.health);
+                syncRemoteBody(s, snap);
                 found = true;
                 break;
             }
@@ -521,6 +556,7 @@ void BattleGridWorld::updateFromSnapshots(
                 c->set_location(COORD{snap.position[0], snap.position[1], snap.position[2]});
                 c->setYaw(snap.yaw);
                 c->setHealth(snap.health);
+                syncRemoteBody(c, snap);
                 found = true;
                 break;
             }
@@ -528,19 +564,21 @@ void BattleGridWorld::updateFromSnapshots(
         if (found) continue;
 
         // Try vehicles
-        auto updateVehicle = [&](auto& list) -> bool {
+        auto updateVehicle = [&](auto& list, double rootOffset = 0.0) -> bool {
             for (auto& v : list) {
                 if (v->name() == snap.name) {
                     v->set_location(COORD{snap.position[0], snap.position[1], snap.position[2]});
                     v->setPhysicsYaw(snap.yaw);
                     v->setYaw(snap.yaw);
                     v->setHealth(snap.health);
+                    syncRemoteBody(v, snap, rootOffset);
                     return true;
                 }
             }
             return false;
         };
-        if (updateVehicle(m_landVehicles)) continue;
+        if (updateVehicle(
+                m_landVehicles, LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight)) continue;
         if (updateVehicle(m_seaVehicles)) continue;
         if (updateVehicle(m_airVehicles)) continue;
 
@@ -556,7 +594,8 @@ void BattleGridWorld::registerCollisionBody(const std::string& name, const COORD
                                             grid::physics::Vec3 boxHalfExtents,
                                             double gravityScale,
                                             bool lockVerticalMotion, bool lockRotation,
-                                            bool lockYawRotation, double cylinderHeight, bool isBullet)
+                                            bool lockYawRotation, double cylinderHeight, bool isBullet,
+                                            grid::physics::BodyMotion motion)
 {
     grid::physics::CollisionBody body;
     body.name = name;
@@ -571,7 +610,7 @@ void BattleGridWorld::registerCollisionBody(const std::string& name, const COORD
         pos[1] + (gravityScale > 0.0 || lockVerticalMotion ? shapeBottomOffset(body) : 0.0),
         pos[2]};
     body.prevPosition = body.position;
-    body.motion = grid::physics::BodyMotion::Dynamic;
+    body.motion = motion;
     body.gravityScale = gravityScale;
     body.lockVerticalMotion = lockVerticalMotion;
     body.lockRotation = lockRotation;
@@ -687,6 +726,9 @@ void BattleGridWorld::submitActorVelocities()
     };
 
     for (const auto& soldier : m_soldiers) {
+        if (soldier->isRemoteOwned()) {
+            continue;
+        }
         submit(soldier);
         if (soldier->consumeJumpRequest()
             && m_physicsWorld.simulatedBodyGrounded(soldier->name())) {
@@ -696,6 +738,9 @@ void BattleGridWorld::submitActorVelocities()
         }
     }
     for (const auto& civilian : m_civilians) {
+        if (civilian->isRemoteOwned()) {
+            continue;
+        }
         submit(civilian);
         if (civilian->consumeJumpRequest()
             && m_physicsWorld.simulatedBodyGrounded(civilian->name())) {
@@ -705,7 +750,7 @@ void BattleGridWorld::submitActorVelocities()
         }
     }
     for (const auto& vehicle : m_landVehicles) {
-        if (!m_physicsWorld.body(vehicle->name())) {
+        if (vehicle->isRemoteOwned() || !m_physicsWorld.body(vehicle->name())) {
             continue;
         }
         double throttle = vehicle->throttle();
@@ -816,7 +861,32 @@ void BattleGridWorld::stepCollisions(double dt,
     applySolvedTransforms(positions);
 
     auto agents = m_engine.getAllAgents();
+    const auto isRemoteOwned = [&](const std::string& name) {
+        for (const auto& agent : agents) {
+            if (agent->name() != name) {
+                continue;
+            }
+            if (const auto* soldier = dynamic_cast<const Soldier*>(agent.get())) {
+                return soldier->isRemoteOwned();
+            }
+            if (const auto* civilian = dynamic_cast<const Civilian*>(agent.get())) {
+                return civilian->isRemoteOwned();
+            }
+            if (const auto* vehicle = dynamic_cast<const Vehicle*>(agent.get())) {
+                return vehicle->isRemoteOwned();
+            }
+            return false;
+        }
+        return false;
+    };
     for (const auto& col : collisions) {
+        // A compute-owned actor is represented here by a kinematic snapshot
+        // proxy. It blocks server-owned actors, but cannot author local
+        // collision gameplay because its compute owner has the real body.
+        if (isRemoteOwned(col.nameA) || isRemoteOwned(col.nameB)) {
+            continue;
+        }
+
         // Event for entity A (normal points toward B).
         grid::physics::CollisionEvent evtA(
             col.nameA, col.nameB, col.normal, col.relativeVelocity,

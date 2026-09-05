@@ -37,8 +37,12 @@ state atomically under the engine lock.
 - The solver uses a fixed timestep, but do not assume bit-for-bit determinism across platforms or
   Box3D versions. Prefer authoritative snapshots and correction over lockstep simulation until
   cross-platform determinism is demonstrated.
-- Cross-service contacts need a defined handoff policy (for example, a region/contact owner) before
-  enabling physical interaction across ownership boundaries.
+- BattleGrid's interim cross-service contact policy uses snapshot-driven kinematic proxies on the
+  server for compute-owned actors. Server-owned players resolve against those proxies, so they
+  cannot pass through a delegated actor; the compute node remains the only solver advancing the
+  delegated actor. This is deliberately one-way: the proxy does not receive collision impulses or
+  gameplay damage. Bidirectional collision response and damage still require a region/contact-owner
+  handoff protocol before they can be enabled.
 
 ## Integration points
 

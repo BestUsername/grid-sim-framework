@@ -471,6 +471,46 @@ TEST(BattleGridPhysicsTest, RemoteSoldierUsesAnUprightCapsule)
     EXPECT_TRUE(body->lockRotation);
 }
 
+TEST(BattleGridPhysicsTest, RemoteOwnedSoldierUsesSnapshotDrivenCollisionProxy)
+{
+    BattleGridWorld world;
+    world.loadMap(TerrainMap(16, 16, TerrainType::Land));
+    InputMap input;
+    world.populate(input);
+
+    Soldier* remoteSoldier = nullptr;
+    for (const auto& agent : world.getAllAgents()) {
+        auto* soldier = dynamic_cast<Soldier*>(agent.get());
+        if (soldier && soldier->name() != world.playerSoldier().name()) {
+            remoteSoldier = soldier;
+            break;
+        }
+    }
+    ASSERT_NE(remoteSoldier, nullptr);
+    remoteSoldier->set_location(COORD{1.0, 0.0, 0.0});
+    ASSERT_TRUE(world.setAgentRemoteOwned(remoteSoldier->name(), true));
+
+    const auto* proxy = world.physicsWorld().body(remoteSoldier->name());
+    ASSERT_NE(proxy, nullptr);
+    EXPECT_EQ(proxy->motion, grid::physics::BodyMotion::Kinematic);
+    EXPECT_DOUBLE_EQ(proxy->position[1], 0.9);
+
+    grid::net::AgentSnapshot snapshot;
+    snapshot.name = remoteSoldier->name();
+    snapshot.position = {1.0, 0.0, 0.0};
+    world.updateFromSnapshots({snapshot});
+
+    world.playerSoldier().set_location(COORD{0.0, 0.0, 0.0});
+    world.physicsWorld().updateBodyPosition(world.playerSoldier().name(), 0.0, 0.9, 0.0);
+    world.playerSoldier().setMovementVelocity(6.0, 0.0);
+    auto positions = world.engine().snapshotAgentPositions();
+    for (int step = 0; step < 30; ++step) {
+        world.stepCollisions(1.0 / 60.0, positions);
+    }
+
+    EXPECT_LT(world.playerSoldier().location()[0], 0.5);
+}
+
 TEST(BattleGridPhysicsTest, VehicleSnapshotsUpdateRenderedYaw)
 {
     BattleGridWorld world;

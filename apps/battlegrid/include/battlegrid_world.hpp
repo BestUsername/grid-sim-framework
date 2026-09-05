@@ -103,7 +103,8 @@ private:
                                double gravityScale = 1.0,
                                bool lockVerticalMotion = false, bool lockRotation = false,
                                bool lockYawRotation = true, double cylinderHeight = 0.3,
-                               bool isBullet = false);
+                               bool isBullet = false,
+                               grid::physics::BodyMotion motion = grid::physics::BodyMotion::Dynamic);
     void submitActorVelocities();
     void applySolvedTransforms(std::unordered_map<std::string, COORD>& positions);
     void retireDestroyedLandVehicles();
