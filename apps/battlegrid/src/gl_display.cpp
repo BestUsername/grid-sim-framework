@@ -169,8 +169,6 @@ GLDisplay::GLDisplay(const TerrainMap& terrain,
     if (!m_glCtx)
         throw std::runtime_error(std::string("SDL_GL_CreateContext: ") + SDL_GetError());
 
-    // Capture mouse for FPS-style look
-    SDL_SetRelativeMouseMode(SDL_TRUE);
     SDL_GL_SetSwapInterval(1);
 
     initGL();
@@ -178,6 +176,7 @@ GLDisplay::GLDisplay(const TerrainMap& terrain,
     initGeometry();
     buildTerrainMesh();
     m_mapOverlay.init(m_shaderProgram, m_mvpLoc, m_colorLoc, m_alphaLoc);
+    SDL_SetRelativeMouseMode(hasInputFocus() ? SDL_TRUE : SDL_FALSE);
 }
 
 GLDisplay::~GLDisplay()
@@ -402,47 +401,63 @@ std::optional<io::InputEvent> GLDisplay::pollEvent()
                 m_windowW = sdlEv.window.data1;
                 m_windowH = sdlEv.window.data2;
                 glViewport(0, 0, m_windowW, m_windowH);
+            } else if (sdlEv.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+                SDL_SetRelativeMouseMode(SDL_TRUE);
+            } else if (sdlEv.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                SDL_SetRelativeMouseMode(SDL_FALSE);
             }
             break;
 
         case SDL_MOUSEMOTION:
-            m_mouse.feedMotion(sdlEv.motion.x, sdlEv.motion.y,
-                               sdlEv.motion.xrel, sdlEv.motion.yrel);
+            if (hasInputFocus()) {
+                m_mouse.feedMotion(sdlEv.motion.x, sdlEv.motion.y,
+                                   sdlEv.motion.xrel, sdlEv.motion.yrel);
+            }
             break;
 
         case SDL_MOUSEBUTTONDOWN:
         case SDL_MOUSEBUTTONUP:
-            m_mouse.feedButton(sdlEv.button.button,
-                               sdlEv.type == SDL_MOUSEBUTTONDOWN,
-                               sdlEv.button.x, sdlEv.button.y);
+            if (hasInputFocus()) {
+                m_mouse.feedButton(sdlEv.button.button,
+                                   sdlEv.type == SDL_MOUSEBUTTONDOWN,
+                                   sdlEv.button.x, sdlEv.button.y);
+            }
             break;
 
         case SDL_MOUSEWHEEL:
-            m_mouse.feedScroll(sdlEv.wheel.x, sdlEv.wheel.y);
+            if (hasInputFocus()) {
+                m_mouse.feedScroll(sdlEv.wheel.x, sdlEv.wheel.y);
+            }
             break;
 
         case SDL_KEYDOWN:
         case SDL_KEYUP:
-            m_keyboard.feedSDLEvent(
-                sdlEv.key.keysym.scancode,
-                sdlEv.key.keysym.mod,
-                sdlEv.type == SDL_KEYDOWN,
-                sdlEv.key.repeat != 0);
+            if (hasInputFocus()) {
+                m_keyboard.feedSDLEvent(
+                    sdlEv.key.keysym.scancode,
+                    sdlEv.key.keysym.mod,
+                    sdlEv.type == SDL_KEYDOWN,
+                    sdlEv.key.repeat != 0);
+            }
             break;
 
         case SDL_CONTROLLERBUTTONDOWN:
         case SDL_CONTROLLERBUTTONUP:
-            m_gamepad.feedButton(
-                sdlEv.cbutton.which,
-                sdlEv.cbutton.button,
-                sdlEv.type == SDL_CONTROLLERBUTTONDOWN);
+            if (hasInputFocus()) {
+                m_gamepad.feedButton(
+                    sdlEv.cbutton.which,
+                    sdlEv.cbutton.button,
+                    sdlEv.type == SDL_CONTROLLERBUTTONDOWN);
+            }
             break;
 
         case SDL_CONTROLLERAXISMOTION:
-            m_gamepad.feedAxis(
-                sdlEv.caxis.which,
-                sdlEv.caxis.axis,
-                sdlEv.caxis.value);
+            if (hasInputFocus()) {
+                m_gamepad.feedAxis(
+                    sdlEv.caxis.which,
+                    sdlEv.caxis.axis,
+                    sdlEv.caxis.value);
+            }
             break;
 
         case SDL_CONTROLLERDEVICEADDED:
@@ -466,6 +481,11 @@ std::optional<io::InputEvent> GLDisplay::pollEvent()
         return gev;
 
     return std::nullopt;
+}
+
+bool GLDisplay::hasInputFocus() const
+{
+    return SDL_GetKeyboardFocus() == m_window;
 }
 
 // ─────────────────────────────────────────────────────────

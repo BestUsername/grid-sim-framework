@@ -438,6 +438,37 @@ TEST(BattleGridMapTest, DefaultMapContainsDriveableSlopedHill)
     EXPECT_EQ(world.mapWorld().terrain().get(32, 23).tags.at("battlegrid:slope"), "S");
 }
 
+TEST(InputMapTest, ClearReleasesHeldInputsAndPendingActions)
+{
+    InputMap input;
+    input.bindKey(io::Key::W, GameAction::MoveZ, -1.0f);
+    input.bindKey(io::Key::E, GameAction::Interact);
+    input.bindMouseX(GameAction::LookX);
+
+    input.processEvent(io::KeyEvent{io::Key::W, io::Action::Press});
+    input.processEvent(io::KeyEvent{io::Key::E, io::Action::Press});
+    input.processEvent(io::MouseMoveEvent{0, 0, 12, 0});
+    input.clear();
+
+    EXPECT_FLOAT_EQ(input.axis(GameAction::MoveZ), 0.0f);
+    EXPECT_FALSE(input.pressed(GameAction::Interact));
+    EXPECT_FLOAT_EQ(input.delta(GameAction::LookX), 0.0f);
+}
+
+TEST(BattleGridPhysicsTest, RemoteSoldierUsesAnUprightCapsule)
+{
+    BattleGridWorld world;
+    world.loadMap(TerrainMap(16, 16, TerrainType::Land));
+
+    auto soldier = world.addRemoteSoldier("remote_player");
+    const auto* body = world.physicsWorld().body(soldier->name());
+
+    ASSERT_NE(body, nullptr);
+    EXPECT_EQ(body->shape, grid::physics::CollisionShape::Capsule);
+    EXPECT_DOUBLE_EQ(body->capsuleHeight, 1.8);
+    EXPECT_TRUE(body->lockRotation);
+}
+
 TEST(BattleGridPhysicsTest, MountedLandVehicleUsesForwardReverseAndSteeringControls)
 {
     BattleGridWorld world;

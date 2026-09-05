@@ -117,4 +117,12 @@ void InputMap::endFrame() {
     m_justPressed.fill(false);
 }
 
+void InputMap::clear()
+{
+    m_keysHeld.clear();
+    m_gpButtonsHeld.clear();
+    m_gpAxisValues.clear();
+    endFrame();
+}
+
 } // namespace battlegrid

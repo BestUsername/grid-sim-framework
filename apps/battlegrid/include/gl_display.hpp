@@ -46,6 +46,9 @@ public:
     /// Poll for user input events (keyboard, mouse, quit).
     std::optional<io::InputEvent> pollEvent();
 
+    /// True only while this display owns keyboard focus.
+    bool hasInputFocus() const;
+
     /// Render the full scene.
     void renderFrame(const std::vector<std::shared_ptr<I_AGENT>>& agents,
                      const PositionSnapshot& positions,

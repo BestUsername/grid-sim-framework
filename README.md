@@ -130,6 +130,7 @@ Run the included demo app with the shipped ASCII map:
 Distributed modes:
 
 ```bash
+# Pick an unused TCP port. Start only one server/headless instance per port.
 ./build/bin/battlegrid --server 4000 --map apps/battlegrid/maps/default.map
 ./build/bin/battlegrid --client 127.0.0.1:4000
 ./build/bin/battlegrid --headless 4000 --map apps/battlegrid/maps/default.map

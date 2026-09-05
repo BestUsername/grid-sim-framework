@@ -329,7 +329,9 @@ std::shared_ptr<Soldier> BattleGridWorld::addRemoteSoldier(const std::string& na
     soldier->setPlayerControlled(true);
     m_engine.addAgent(soldier);
     m_soldiers.push_back(soldier);
-    registerCollisionBody(name, spawn, Soldier::kMass, Soldier::kCollisionRadius);
+    registerCollisionBody(name, spawn, Soldier::kMass, Soldier::kCollisionRadius,
+                          grid::physics::CollisionShape::Capsule, 1.8,
+                          {0.5, 0.5, 0.5}, 1.0, false, true);
 
     std::cout << "Added remote soldier: " << name << "\n";
     return soldier;

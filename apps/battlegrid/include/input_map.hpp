@@ -79,6 +79,9 @@ public:
     /// Reset per-frame deltas and edge-triggered flags.
     void endFrame();
 
+    /// Clear held and pending input when the display loses focus.
+    void clear();
+
 private:
     struct Binding { GameAction action; float scale; };
     struct MouseBinding { GameAction action; float scale; };

@@ -16,6 +16,8 @@
 #include "libnet/network_bridge.hpp"
 #include "libnet/serializer.hpp"
 
+#include <boost/system/system_error.hpp>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -454,6 +456,7 @@ int main(int argc, char** argv)
     std::unordered_map<std::string, grid::net::AgentSnapshot> computeSnapshots;
 
     if (isServerLike) {
+        try {
         bridge.hostServer(
             serverPort,
             // Per-session message handler (runs on IO thread)
@@ -487,6 +490,10 @@ int main(int argc, char** argv)
                 std::lock_guard<std::mutex> lk(pendingMtx);
                 pendingDisconnects.push_back(session.get());
             });
+        } catch (const boost::system::system_error& error) {
+            std::cerr << "Unable to listen on port " << serverPort << ": " << error.what() << "\n";
+            return EXIT_FAILURE;
+        }
     }
 
     // ── Network setup (client mode) ─────────────────────────────────
@@ -737,6 +744,9 @@ int main(int argc, char** argv)
 
         // Drain input events from SDL (only when we have a display)
         if (display) {
+            if (!display->hasInputFocus()) {
+                inputMap.clear();
+            }
             while (auto evt = display->pollEvent()) {
                 // Check for quit
                 if (auto* ke = std::get_if<io::KeyEvent>(&*evt)) {
@@ -758,6 +768,9 @@ int main(int argc, char** argv)
 
                 // Feed all input through the configurable input map
                 inputMap.processEvent(*evt);
+            }
+            if (!display->hasInputFocus()) {
+                inputMap.clear();
             }
 
             // Handle map toggle
