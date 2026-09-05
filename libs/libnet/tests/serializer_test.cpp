@@ -101,6 +101,11 @@ TEST(SerializerTest, InputSnapshotAllButtons) {
     EXPECT_TRUE(decoded.toggleCamera);
 }
 
+TEST(SerializerTest, RejectsInvalidInputSnapshotPayloadSize) {
+    const Message truncated(MessageType::InputEvent, {0, 0, 0, 0});
+    EXPECT_THROW(deserializeInputSnapshot(truncated), std::invalid_argument);
+}
+
 TEST(SerializerTest, ControlRoundTrip) {
     auto msg = serializeControl(ControlCode::Pause);
     auto decoded = deserializeControl(msg);

@@ -51,6 +51,8 @@ struct CollisionBody {
     /// Lock roll and pitch. Use lockYawRotation to also lock yaw.
     bool lockRotation = false;
     bool lockYawRotation = true;
+    /// Enable continuous collision detection against other dynamic bodies.
+    bool isBullet = false;
 };
 
 /**

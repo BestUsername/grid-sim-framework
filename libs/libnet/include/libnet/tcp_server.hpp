@@ -50,6 +50,7 @@ private:
     void handleError();
 
     tcp::socket m_socket;
+    boost::asio::strand<tcp::socket::executor_type> m_writeStrand;
     MessageHandler m_onMessage;
     CloseHandler   m_onClose;
 

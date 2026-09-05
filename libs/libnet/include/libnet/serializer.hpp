@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -177,6 +178,8 @@ inline KeyEventData deserializeKeyEvent(const Message& msg) {
  * This maps directly to the battlegrid InputMap query interface.
  */
 struct InputSnapshot {
+    static constexpr size_t kSerializedSize = 8 * sizeof(float) + sizeof(uint8_t);
+
     // Continuous axes — persistent state from held keys / gamepad sticks
     float moveX  = 0.0f;   ///< Strafe: -1 left, +1 right
     float moveZ  = 0.0f;   ///< Forward/back: -1 fwd, +1 back
@@ -218,6 +221,9 @@ inline Message serializeInputSnapshot(const InputSnapshot& in) {
 }
 
 inline InputSnapshot deserializeInputSnapshot(const Message& msg) {
+    if (msg.payload().size() != InputSnapshot::kSerializedSize) {
+        throw std::invalid_argument("invalid InputSnapshot payload size");
+    }
     const uint8_t* p = msg.payload().data();
     InputSnapshot in;
     in.moveX      = detail::unpackFloat(p);

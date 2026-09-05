@@ -334,6 +334,7 @@ TEST(BattleGridPhysicsTest, RegistersPeopleAsCapsulesAndSurfaceVehiclesAsHullBox
     EXPECT_DOUBLE_EQ(landBody->position[1], LandVehicle::kChassisCenterHeight);
     EXPECT_TRUE(landBody->lockRotation);
     EXPECT_FALSE(landBody->lockYawRotation);
+    EXPECT_TRUE(landBody->isBullet);
     for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
         const std::string wheelName = landVehicle->wheelName(index);
         const auto* wheel = world.physicsWorld().body(wheelName);
@@ -365,6 +366,7 @@ TEST(BattleGridPhysicsTest, RegistersPeopleAsCapsulesAndSurfaceVehiclesAsHullBox
     EXPECT_EQ(seaBody->boxHalfExtents, (grid::physics::Vec3{0.4, 0.3, 1.0}));
     EXPECT_TRUE(seaBody->lockRotation);
     EXPECT_FALSE(seaBody->lockYawRotation);
+    EXPECT_TRUE(seaBody->isBullet);
 
     ASSERT_NE(airBody, nullptr);
     ASSERT_NE(airVehicle, nullptr);
@@ -396,7 +398,7 @@ TEST(BattleGridMapTest, DefaultMapContainsNavigableSuspensionBumps)
 
     BattleGridWorld world;
     ASSERT_TRUE(world.loadMap(mapPath.string()));
-    EXPECT_EQ(world.physicsWorld().staticBoxCount(), 64u * 64u);
+    EXPECT_EQ(world.physicsWorld().staticBoxCount(), 64u * 64u + 4u);
     for (std::size_t z = 0; z < map.height(); ++z) {
         for (std::size_t x = 0; x < map.width(); ++x) {
             if (map.at(x, z) == TerrainType::Bump) {
@@ -431,7 +433,7 @@ TEST(BattleGridMapTest, DefaultMapContainsDriveableSlopedHill)
 
     BattleGridWorld world;
     ASSERT_TRUE(world.loadMap(mapPath.string()));
-    EXPECT_EQ(world.physicsWorld().staticBoxCount(), 64u * 64u);
+    EXPECT_EQ(world.physicsWorld().staticBoxCount(), 64u * 64u + 4u);
     const auto& hill = world.mapWorld().terrain().get(32, 24);
     EXPECT_EQ(hill.surface, grid::libmap::SurfaceType::Land);
     EXPECT_FLOAT_EQ(hill.elevation, 0.5f);

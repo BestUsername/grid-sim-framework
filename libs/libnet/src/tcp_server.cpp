@@ -14,6 +14,7 @@ namespace grid::net {
 
 Session::Session(tcp::socket socket, MessageHandler onMessage, CloseHandler onClose)
     : m_socket(std::move(socket))
+    , m_writeStrand(m_socket.get_executor())
     , m_onMessage(std::move(onMessage))
     , m_onClose(std::move(onClose))
 {
@@ -27,15 +28,14 @@ void Session::start()
 void Session::send(const Message& msg)
 {
     auto wire = msg.serialize();
-    bool write_in_progress = false;
-    {
-        std::lock_guard<std::mutex> lock(m_writeMutex);
-        write_in_progress = !m_writeQueue.empty();
+    auto self = shared_from_this();
+    boost::asio::post(m_writeStrand, [this, self, wire = std::move(wire)]() mutable {
+        const bool writeInProgress = !m_writeQueue.empty();
         m_writeQueue.push_back(std::move(wire));
-    }
-    if (!write_in_progress) {
-        asyncWrite();
-    }
+        if (!writeInProgress) {
+            asyncWrite();
+        }
+    });
 }
 
 bool Session::isOpen() const
@@ -116,7 +116,6 @@ void Session::deliverMessage()
 
 void Session::asyncWrite()
 {
-    std::lock_guard<std::mutex> lock(m_writeMutex);
     if (m_writeQueue.empty()) {
         return;
     }
@@ -125,19 +124,15 @@ void Session::asyncWrite()
     boost::asio::async_write(
         m_socket,
         boost::asio::buffer(m_writeQueue.front()),
-        [this, self](boost::system::error_code error, size_t) {
+        boost::asio::bind_executor(m_writeStrand, [this, self](boost::system::error_code error, size_t) {
             if (error) {
                 handleError();
                 return;
             }
 
-            {
-                std::lock_guard<std::mutex> inner_lock(m_writeMutex);
-                m_writeQueue.pop_front();
-            }
-
+            m_writeQueue.pop_front();
             asyncWrite();
-        });
+        }));
 }
 
 void Session::handleError()

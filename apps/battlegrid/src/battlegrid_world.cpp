@@ -92,6 +92,19 @@ void BattleGridWorld::rebuildTerrainColliders()
             }
             }
         }
+
+        // Keep dynamic actors inside the finite terrain collider field. Without
+        // these walls, wandering agents can leave the map and fall indefinitely.
+        const double width = static_cast<double>(m_terrain.width());
+        const double height = static_cast<double>(m_terrain.height());
+        m_physicsWorld.addStaticBox("terrain_boundary_north", {width * 0.5, 0.0, -0.5},
+                                    {width * 0.5 + 0.5, terrainDepth, 0.5});
+        m_physicsWorld.addStaticBox("terrain_boundary_south", {width * 0.5, 0.0, height + 0.5},
+                                    {width * 0.5 + 0.5, terrainDepth, 0.5});
+        m_physicsWorld.addStaticBox("terrain_boundary_west", {-0.5, 0.0, height * 0.5},
+                                    {0.5, terrainDepth, height * 0.5 + 0.5});
+        m_physicsWorld.addStaticBox("terrain_boundary_east", {width + 0.5, 0.0, height * 0.5},
+                                    {0.5, terrainDepth, height * 0.5 + 0.5});
     }
 }
 
@@ -236,13 +249,14 @@ void BattleGridWorld::populate(InputMap& inputMap)
         chassisPosition[1] += LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight;
         registerCollisionBody(v->name(), chassisPosition, Vehicle::kMass, Vehicle::kCollisionRadius,
                               grid::physics::CollisionShape::Box, 1.0,
-                              {0.6, LandVehicle::kChassisHalfHeight, 1.1}, 1.0, false, true, false);
+                              {0.6, LandVehicle::kChassisHalfHeight, 1.1}, 1.0, false, true, false,
+                              0.3, true);
         registerLandVehicleWheels(*v);
     }
     for (auto& v : m_seaVehicles)
         registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
                               grid::physics::CollisionShape::Box, 1.0,
-                              {0.4, 0.3, 1.0}, 1.0, false, true, false);
+                              {0.4, 0.3, 1.0}, 1.0, false, true, false, 0.3, true);
     for (auto& v : m_airVehicles)
         registerCollisionBody(v->name(), v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
                               grid::physics::CollisionShape::Sphere, 1.0,
@@ -373,7 +387,8 @@ void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
         chassisPosition[1] += LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight;
         registerCollisionBody(snap.name, chassisPosition, Vehicle::kMass, Vehicle::kCollisionRadius,
                               grid::physics::CollisionShape::Box, 1.0,
-                              {0.6, LandVehicle::kChassisHalfHeight, 1.1}, 1.0, false, true, false);
+                              {0.6, LandVehicle::kChassisHalfHeight, 1.1}, 1.0, false, true, false,
+                              0.3, true);
         registerLandVehicleWheels(*v);
         break;
     }
@@ -384,7 +399,7 @@ void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
         m_seaVehicles.push_back(v);
         registerCollisionBody(snap.name, pos, Vehicle::kMass, Vehicle::kCollisionRadius,
                               grid::physics::CollisionShape::Box, 1.0,
-                              {0.4, 0.3, 1.0}, 1.0, false, true, false);
+                              {0.4, 0.3, 1.0}, 1.0, false, true, false, 0.3, true);
         break;
     }
     case EntityType::AirVehicle: {
@@ -440,7 +455,8 @@ bool BattleGridWorld::setAgentRemoteOwned(const std::string& name, bool owned)
                 chassisPosition[1] += LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight;
                 registerCollisionBody(name, chassisPosition, Vehicle::kMass, Vehicle::kCollisionRadius,
                                       grid::physics::CollisionShape::Box, 1.0,
-                                      {0.6, LandVehicle::kChassisHalfHeight, 1.1}, 1.0, false, true, false);
+                                      {0.6, LandVehicle::kChassisHalfHeight, 1.1}, 1.0, false, true, false,
+                                      0.3, true);
                 registerLandVehicleWheels(*v);
             }
             return true;
@@ -454,7 +470,7 @@ bool BattleGridWorld::setAgentRemoteOwned(const std::string& name, bool owned)
             } else if (!m_physicsWorld.body(name)) {
                 registerCollisionBody(name, v->location(), Vehicle::kMass, Vehicle::kCollisionRadius,
                                       grid::physics::CollisionShape::Box, 1.0,
-                                      {0.4, 0.3, 1.0}, 1.0, false, true, false);
+                                      {0.4, 0.3, 1.0}, 1.0, false, true, false, 0.3, true);
             }
             return true;
         }
@@ -533,7 +549,7 @@ void BattleGridWorld::registerCollisionBody(const std::string& name, const COORD
                                             grid::physics::Vec3 boxHalfExtents,
                                             double gravityScale,
                                             bool lockVerticalMotion, bool lockRotation,
-                                            bool lockYawRotation, double cylinderHeight)
+                                            bool lockYawRotation, double cylinderHeight, bool isBullet)
 {
     grid::physics::CollisionBody body;
     body.name = name;
@@ -553,6 +569,7 @@ void BattleGridWorld::registerCollisionBody(const std::string& name, const COORD
     body.lockVerticalMotion = lockVerticalMotion;
     body.lockRotation = lockRotation;
     body.lockYawRotation = lockYawRotation;
+    body.isBullet = isBullet;
     m_physicsWorld.addBody(body);
 }
 
@@ -719,7 +736,7 @@ void BattleGridWorld::submitActorVelocities()
 void BattleGridWorld::applySolvedTransforms(
     std::unordered_map<std::string, COORD>& positions)
 {
-    auto apply = [&](const auto& actor, bool locationIsGrounded) {
+    auto apply = [&](const auto& actor, bool locationIsGrounded, double rootOffset = 0.0) {
         const auto position = m_physicsWorld.simulatedBodyPosition(actor->name());
         if (!position) {
             return;
@@ -730,7 +747,8 @@ void BattleGridWorld::applySolvedTransforms(
                 bottomOffset = shapeBottomOffset(*body);
             }
         }
-        const COORD solved{(*position)[0], (*position)[1] - bottomOffset, (*position)[2]};
+        const COORD solved{
+            (*position)[0], (*position)[1] - bottomOffset - rootOffset, (*position)[2]};
         actor->set_location(solved);
         positions[actor->name()] = solved;
     };
@@ -738,7 +756,7 @@ void BattleGridWorld::applySolvedTransforms(
     for (const auto& soldier : m_soldiers) apply(soldier, true);
     for (const auto& civilian : m_civilians) apply(civilian, true);
     for (const auto& vehicle : m_landVehicles) {
-        apply(vehicle, true);
+        apply(vehicle, true, LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight);
         for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
             if (const auto wheel = m_physicsWorld.simulatedBodyPosition(vehicle->wheelName(index))) {
                 positions[vehicle->wheelName(index)] = {(*wheel)[0], (*wheel)[1], (*wheel)[2]};

@@ -66,6 +66,7 @@ struct PhysicsWorld::Backend {
         b3BodyDef definition = b3DefaultBodyDef();
         definition.type = body.motion == BodyMotion::Dynamic ? b3_dynamicBody : b3_kinematicBody;
         definition.gravityScale = static_cast<float>(body.gravityScale);
+        definition.isBullet = body.isBullet;
         definition.motionLocks.linearY = body.lockVerticalMotion;
         definition.motionLocks.angularX = body.lockRotation;
         definition.motionLocks.angularY = body.lockRotation && body.lockYawRotation;

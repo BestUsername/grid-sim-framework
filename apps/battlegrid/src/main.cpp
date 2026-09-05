@@ -47,6 +47,23 @@ struct RemotePlayer {
     bool prevInteract = false;
 };
 
+static void mergeRemoteInput(grid::net::InputSnapshot& pending,
+                             const grid::net::InputSnapshot& incoming)
+{
+    pending.moveX = incoming.moveX;
+    pending.moveZ = incoming.moveZ;
+    pending.sprint = incoming.sprint;
+    pending.lookDeltaX += incoming.lookDeltaX;
+    pending.lookDeltaY += incoming.lookDeltaY;
+    pending.zoomDelta += incoming.zoomDelta;
+    pending.lookAxisX = incoming.lookAxisX;
+    pending.lookAxisY = incoming.lookAxisY;
+    pending.jump = pending.jump || incoming.jump;
+    pending.interact = pending.interact || incoming.interact;
+    pending.shout = pending.shout || incoming.shout;
+    pending.toggleCamera = pending.toggleCamera || incoming.toggleCamera;
+}
+
 /// Apply an InputSnapshot to a remote soldier (mirrors PlayerController logic).
 static void applyRemoteInput(RemotePlayer& rp, double dt,
                              battlegrid::BattleGridWorld& world,
@@ -54,6 +71,15 @@ static void applyRemoteInput(RemotePlayer& rp, double dt,
 {
     auto& soldier = *rp.soldier;
     auto& in = rp.input;
+    const auto clearTransientInput = [&] {
+        in.lookDeltaX = 0.0f;
+        in.lookDeltaY = 0.0f;
+        in.zoomDelta = 0.0f;
+        in.jump = false;
+        in.interact = false;
+        in.shout = false;
+        in.toggleCamera = false;
+    };
 
     // Look
     rp.yaw   += static_cast<double>(in.lookDeltaX) * 0.003;
@@ -91,6 +117,7 @@ static void applyRemoteInput(RemotePlayer& rp, double dt,
             const bool hasMove = std::abs(moveX) > 0.01 || std::abs(moveZ) > 0.01;
             if (!hasMove) {
                 rp.vehicle->clearMoveTarget();
+                clearTransientInput();
                 return;
             }
             const double length = std::hypot(moveX, moveZ);
@@ -106,6 +133,7 @@ static void applyRemoteInput(RemotePlayer& rp, double dt,
                 rp.vehicle->location()[1],
                 rp.vehicle->location()[2] + worldZ * rp.vehicle->speed()});
         }
+        clearTransientInput();
         return;
     }
 
@@ -138,6 +166,8 @@ static void applyRemoteInput(RemotePlayer& rp, double dt,
         soldier.jump();
     if (in.shout)
         soldier.communicate(grid::libsim::Senses::Hearing, "Hey! Over here!");
+
+    clearTransientInput();
 }
 
 /// Snapshot every agent into a vector of AgentSnapshots for network broadcast.
@@ -462,12 +492,12 @@ int main(int argc, char** argv)
             // Per-session message handler (runs on IO thread)
             [&](std::shared_ptr<grid::net::Session> session, grid::net::Message msg) {
                 if (msg.type() == grid::net::MessageType::InputEvent &&
-                    msg.payload().size() > 3) {
+                    msg.payload().size() == grid::net::InputSnapshot::kSerializedSize) {
                     auto input = grid::net::deserializeInputSnapshot(msg);
                     std::lock_guard<std::mutex> lk(remotesMtx);
                     auto it = remotePlayers.find(session.get());
                     if (it != remotePlayers.end())
-                        it->second.input = input;
+                        mergeRemoteInput(it->second.input, input);
                 } else if (msg.type() == grid::net::MessageType::ComputeRegister) {
                     std::lock_guard<std::mutex> lk(pendingMtx);
                     pendingComputeNodes.push_back(session);
