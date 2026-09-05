@@ -471,6 +471,32 @@ TEST(BattleGridPhysicsTest, RemoteSoldierUsesAnUprightCapsule)
     EXPECT_TRUE(body->lockRotation);
 }
 
+TEST(BattleGridPhysicsTest, VehicleSnapshotsUpdateRenderedYaw)
+{
+    BattleGridWorld world;
+    world.loadMap(TerrainMap(16, 16, TerrainType::Land));
+    InputMap input;
+    world.populate(input);
+
+    LandVehicle* vehicle = nullptr;
+    for (const auto& agent : world.getAllAgents()) {
+        vehicle = dynamic_cast<LandVehicle*>(agent.get());
+        if (vehicle) break;
+    }
+    ASSERT_NE(vehicle, nullptr);
+
+    grid::net::AgentSnapshot snapshot;
+    snapshot.name = vehicle->name();
+    snapshot.position = {4.0, 0.0, 5.0};
+    snapshot.yaw = 1.25;
+    snapshot.entityType = static_cast<uint8_t>(EntityType::LandVehicle);
+    world.updateFromSnapshots({snapshot});
+
+    EXPECT_EQ(vehicle->location(), (COORD{4.0, 0.0, 5.0}));
+    EXPECT_DOUBLE_EQ(vehicle->yaw(), snapshot.yaw);
+    EXPECT_DOUBLE_EQ(vehicle->desiredYaw(), snapshot.yaw);
+}
+
 TEST(BattleGridPhysicsTest, MountedLandVehicleUsesForwardReverseAndSteeringControls)
 {
     BattleGridWorld world;

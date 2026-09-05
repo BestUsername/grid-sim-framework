@@ -381,6 +381,8 @@ void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
     case EntityType::LandVehicle: {
         auto v = std::make_shared<LandVehicle>(
             m_engine, pos, snap.name, faction, m_terrain, 12.0);
+        v->setPhysicsYaw(snap.yaw);
+        v->setYaw(snap.yaw);
         m_engine.addAgent(v);
         m_landVehicles.push_back(v);
         COORD chassisPosition = pos;
@@ -395,6 +397,8 @@ void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
     case EntityType::SeaVehicle: {
         auto v = std::make_shared<SeaVehicle>(
             m_engine, pos, snap.name, faction, m_terrain, 14.0);
+        v->setPhysicsYaw(snap.yaw);
+        v->setYaw(snap.yaw);
         m_engine.addAgent(v);
         m_seaVehicles.push_back(v);
         registerCollisionBody(snap.name, pos, Vehicle::kMass, Vehicle::kCollisionRadius,
@@ -405,6 +409,8 @@ void BattleGridWorld::addAgentFromSnapshot(const grid::net::AgentSnapshot& snap)
     case EntityType::AirVehicle: {
         auto v = std::make_shared<AirVehicle>(
             m_engine, pos, snap.name, faction, m_terrain, 22.0, 20.0);
+        v->setPhysicsYaw(snap.yaw);
+        v->setYaw(snap.yaw);
         m_engine.addAgent(v);
         m_airVehicles.push_back(v);
         registerCollisionBody(snap.name, pos, Vehicle::kMass, Vehicle::kCollisionRadius,
@@ -526,6 +532,7 @@ void BattleGridWorld::updateFromSnapshots(
             for (auto& v : list) {
                 if (v->name() == snap.name) {
                     v->set_location(COORD{snap.position[0], snap.position[1], snap.position[2]});
+                    v->setPhysicsYaw(snap.yaw);
                     v->setYaw(snap.yaw);
                     v->setHealth(snap.health);
                     return true;

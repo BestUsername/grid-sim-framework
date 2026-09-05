@@ -669,8 +669,10 @@ int main(int argc, char** argv)
                 std::vector<grid::net::AgentSnapshot> assignments;
                 auto agents = world.engine().getAllAgents();
                 for (auto& a : agents) {
-                    // Skip the local player and remote client soldiers
+                    // Vehicles remain server-authoritative so clients can mount
+                    // and drive them without crossing a physics-owner boundary.
                     if (a->name() == "Player") continue;
+                    if (dynamic_cast<battlegrid::Vehicle*>(a.get())) continue;
                     {
                         std::lock_guard<std::mutex> rlk(remotesMtx);
                         bool isClient = false;
