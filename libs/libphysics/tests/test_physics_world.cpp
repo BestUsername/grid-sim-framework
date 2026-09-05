@@ -402,6 +402,31 @@ TEST(PhysicsWorldTest, DynamicBodiesReportBox3DCollisionData)
     EXPECT_GT(std::abs(collisions.front().relativeVelocity[0]), 0.0);
 }
 
+TEST(PhysicsWorldTest, DynamicBodiesReportLowSpeedBeginContact)
+{
+    PhysicsWorld pw(1.0 / 60.0);
+    CollisionBody a;
+    a.name = "A";
+    a.position = {0.0, 0.0, 0.0};
+    a.radius = 0.5;
+    a.mass = 10.0;
+    a.motion = grid::physics::BodyMotion::Dynamic;
+
+    CollisionBody b = a;
+    b.name = "B";
+    b.position = {0.9, 0.0, 0.0};
+    pw.addBody(a);
+    pw.addBody(b);
+
+    const auto collisions = pw.step(1.0 / 60.0);
+    ASSERT_EQ(collisions.size(), 1u);
+    EXPECT_TRUE(
+        (collisions.front().nameA == "A" && collisions.front().nameB == "B")
+        || (collisions.front().nameA == "B" && collisions.front().nameB == "A"));
+    EXPECT_GT(std::abs(collisions.front().normal[0]), 0.9);
+    EXPECT_DOUBLE_EQ(collisions.front().impulse, 0.0);
+}
+
 TEST(PhysicsWorldTest, UpdatePreservesPreviousPosition)
 {
     PhysicsWorld pw;

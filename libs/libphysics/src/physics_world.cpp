@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <set>
 
 namespace grid::physics {
 
@@ -677,12 +678,18 @@ void PhysicsWorld::subStep(double dt, std::vector<Collision>& out)
         hasDynamicBodies = hasDynamicBodies || body.motion == BodyMotion::Dynamic;
     }
     if (hasDynamicBodies) {
-        for (int index = 0; index < events.hitCount; ++index) {
-            const auto& hit = events.hitEvents[index];
-            const auto nameA = m_backend->nameForShape(hit.shapeIdA);
-            const auto nameB = m_backend->nameForShape(hit.shapeIdB);
+        std::set<std::pair<std::string, std::string>> reportedPairs;
+        const auto appendCollision = [&](b3ShapeId shapeIdA, b3ShapeId shapeIdB,
+                                         const Vec3& normal, double approachSpeed) {
+            const auto nameA = m_backend->nameForShape(shapeIdA);
+            const auto nameB = m_backend->nameForShape(shapeIdB);
             if (!nameA || !nameB) {
-                continue;
+                return;
+            }
+
+            const auto orderedPair = std::minmax(*nameA, *nameB);
+            if (!reportedPairs.emplace(orderedPair.first, orderedPair.second).second) {
+                return;
             }
 
             const auto& bodyA = m_bodies.at(*nameA);
@@ -691,20 +698,64 @@ void PhysicsWorld::subStep(double dt, std::vector<Collision>& out)
             const double invMassB = bodyB.mass > 0.0 ? 1.0 / bodyB.mass : 0.0;
             const double denominator = invMassA + invMassB;
             const double impulse = denominator > 1e-12
-                ? (1.0 + m_restitution) * hit.approachSpeed / denominator
+                ? (1.0 + m_restitution) * approachSpeed / denominator
                 : 0.0;
             const b3Vec3 velocityA = b3Body_GetLinearVelocity(m_backend->bodies.at(*nameA));
             const b3Vec3 velocityB = b3Body_GetLinearVelocity(m_backend->bodies.at(*nameB));
-
             out.push_back({
                 *nameA,
                 *nameB,
-                {hit.normal.x, hit.normal.y, hit.normal.z},
+                normal,
                 {velocityA.x - velocityB.x, velocityA.y - velocityB.y, velocityA.z - velocityB.z},
                 impulse,
                 bodyA.mass,
                 bodyB.mass,
                 0.0});
+        };
+
+        for (int index = 0; index < events.hitCount; ++index) {
+            const auto& hit = events.hitEvents[index];
+            appendCollision(
+                hit.shapeIdA,
+                hit.shapeIdB,
+                {hit.normal.x, hit.normal.y, hit.normal.z},
+                hit.approachSpeed);
+        }
+
+        for (int index = 0; index < events.beginCount; ++index) {
+            const auto& begin = events.beginEvents[index];
+            const auto nameA = m_backend->nameForShape(begin.shapeIdA);
+            const auto nameB = m_backend->nameForShape(begin.shapeIdB);
+            if (!nameA || !nameB) {
+                continue;
+            }
+            const auto positionA = m_backend->position(*nameA);
+            const auto positionB = m_backend->position(*nameB);
+            if (!positionA || !positionB) {
+                continue;
+            }
+            Vec3 normal{
+                (*positionB)[0] - (*positionA)[0],
+                (*positionB)[1] - (*positionA)[1],
+                (*positionB)[2] - (*positionA)[2]};
+            const double length = std::sqrt(
+                normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+            if (length > 1e-12) {
+                normal[0] /= length;
+                normal[1] /= length;
+                normal[2] /= length;
+            } else {
+                normal = {1.0, 0.0, 0.0};
+            }
+            const auto velocityA = m_backend->velocity(*nameA);
+            const auto velocityB = m_backend->velocity(*nameB);
+            const double approachSpeed = velocityA && velocityB
+                ? std::max(0.0,
+                           ((*velocityA)[0] - (*velocityB)[0]) * normal[0]
+                               + ((*velocityA)[1] - (*velocityB)[1]) * normal[1]
+                               + ((*velocityA)[2] - (*velocityB)[2]) * normal[2])
+                : 0.0;
+            appendCollision(begin.shapeIdA, begin.shapeIdB, normal, approachSpeed);
         }
         return;
     }
