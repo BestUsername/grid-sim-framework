@@ -27,6 +27,7 @@
 #include <cstring>
 #include <ctime>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -231,6 +232,10 @@ static grid::net::InputSnapshot buildInputSnapshot(battlegrid::InputMap& inputMa
 /// Serialize a TerrainMap into a TerrainData message.
 /// Wire format: [uint16 width] [uint16 height] [width*height chars]
 static grid::net::Message serializeTerrain(const battlegrid::TerrainMap& map) {
+    if (map.width() > std::numeric_limits<uint16_t>::max()
+        || map.height() > std::numeric_limits<uint16_t>::max()) {
+        throw std::invalid_argument("terrain dimensions exceed network protocol limit");
+    }
     std::vector<uint8_t> buf;
     uint16_t w = static_cast<uint16_t>(map.width());
     uint16_t h = static_cast<uint16_t>(map.height());
@@ -246,14 +251,32 @@ static grid::net::Message serializeTerrain(const battlegrid::TerrainMap& map) {
 
 /// Deserialize a TerrainData message into a TerrainMap.
 static battlegrid::TerrainMap deserializeTerrain(const grid::net::Message& msg) {
-    const uint8_t* p = msg.payload().data();
-    uint16_t w = 0, h = 0;
-    std::memcpy(&w, p, 2); p += 2;
-    std::memcpy(&h, p, 2); p += 2;
+    grid::net::detail::Reader reader(msg.payload());
+    const uint16_t w = reader.readUint16();
+    const uint16_t h = reader.readUint16();
+    if (reader.remaining() != static_cast<size_t>(w) * h) {
+        throw std::invalid_argument("invalid terrain payload size");
+    }
     battlegrid::TerrainMap map(w, h, battlegrid::TerrainType::Land);
     for (size_t z = 0; z < h; ++z)
-        for (size_t x = 0; x < w; ++x)
-            map.set(x, z, static_cast<battlegrid::TerrainType>(*p++));
+        for (size_t x = 0; x < w; ++x) {
+            const auto terrain = static_cast<battlegrid::TerrainType>(reader.readUint8());
+            switch (terrain) {
+            case battlegrid::TerrainType::Water:
+            case battlegrid::TerrainType::Land:
+            case battlegrid::TerrainType::Bump:
+            case battlegrid::TerrainType::SlopeNorth:
+            case battlegrid::TerrainType::SlopeSouth:
+            case battlegrid::TerrainType::SlopeEast:
+            case battlegrid::TerrainType::SlopeWest:
+            case battlegrid::TerrainType::Hill:
+            case battlegrid::TerrainType::Mountain:
+                map.set(x, z, terrain);
+                break;
+            default:
+                throw std::invalid_argument("invalid terrain value");
+            }
+        }
     return map;
 }
 
@@ -263,6 +286,9 @@ static grid::net::Message serializeGameLogBatch(
     const std::vector<grid::libsim::LogEntry>& entries,
     size_t from, size_t to)
 {
+    if (to < from || to - from > std::numeric_limits<uint16_t>::max()) {
+        throw std::invalid_argument("game log batch exceeds network protocol limit");
+    }
     std::vector<uint8_t> buf;
     uint16_t count = static_cast<uint16_t>(to - from);
     buf.resize(2);
@@ -287,15 +313,21 @@ struct RemoteLogEntry {
 static std::vector<RemoteLogEntry> deserializeGameLogBatch(
     const grid::net::Message& msg)
 {
-    const uint8_t* p = msg.payload().data();
-    uint16_t count = 0;
-    std::memcpy(&count, p, 2); p += 2;
+    grid::net::detail::Reader reader(msg.payload());
+    const uint16_t count = reader.readUint16();
     std::vector<RemoteLogEntry> out(count);
     for (uint16_t i = 0; i < count; ++i) {
-        out[i].source   = grid::net::detail::unpackString(p);
-        out[i].location = grid::net::detail::unpackString(p);
-        out[i].sense    = static_cast<grid::libsim::Senses>(grid::net::detail::unpackUint8(p));
-        out[i].message  = grid::net::detail::unpackString(p);
+        out[i].source = reader.readString();
+        out[i].location = reader.readString();
+        const auto sense = reader.readUint8();
+        if (sense > static_cast<uint8_t>(grid::libsim::Senses::Touch)) {
+            throw std::invalid_argument("invalid game log sense");
+        }
+        out[i].sense = static_cast<grid::libsim::Senses>(sense);
+        out[i].message = reader.readString();
+    }
+    if (!reader.empty()) {
+        throw std::invalid_argument("game log payload contains trailing data");
     }
     return out;
 }

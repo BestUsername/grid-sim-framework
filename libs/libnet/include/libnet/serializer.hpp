@@ -4,8 +4,10 @@
 #include "libnet/message.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -35,19 +37,13 @@ struct AgentSnapshot {
 namespace detail {
 
 inline void packString(std::vector<uint8_t>& buf, const std::string& s) {
+    if (s.size() > std::numeric_limits<uint16_t>::max()) {
+        throw std::invalid_argument("string exceeds network protocol limit");
+    }
     uint16_t len = static_cast<uint16_t>(s.size());
     buf.resize(buf.size() + 2 + len);
     std::memcpy(buf.data() + buf.size() - 2 - len, &len, 2);
     std::memcpy(buf.data() + buf.size() - len, s.data(), len);
-}
-
-inline std::string unpackString(const uint8_t*& p) {
-    uint16_t len = 0;
-    std::memcpy(&len, p, 2);
-    p += 2;
-    std::string s(reinterpret_cast<const char*>(p), len);
-    p += len;
-    return s;
 }
 
 inline void packDouble(std::vector<uint8_t>& buf, double v) {
@@ -56,21 +52,8 @@ inline void packDouble(std::vector<uint8_t>& buf, double v) {
     std::memcpy(buf.data() + off, &v, sizeof(double));
 }
 
-inline double unpackDouble(const uint8_t*& p) {
-    double v = 0;
-    std::memcpy(&v, p, sizeof(double));
-    p += sizeof(double);
-    return v;
-}
-
 inline void packUint8(std::vector<uint8_t>& buf, uint8_t v) {
     buf.push_back(v);
-}
-
-inline uint8_t unpackUint8(const uint8_t*& p) {
-    uint8_t v = *p;
-    ++p;
-    return v;
 }
 
 inline void packFloat(std::vector<uint8_t>& buf, float v) {
@@ -79,12 +62,82 @@ inline void packFloat(std::vector<uint8_t>& buf, float v) {
     std::memcpy(buf.data() + off, &v, sizeof(float));
 }
 
-inline float unpackFloat(const uint8_t*& p) {
-    float v = 0;
-    std::memcpy(&v, p, sizeof(float));
-    p += sizeof(float);
-    return v;
-}
+class Reader {
+public:
+    explicit Reader(const std::vector<uint8_t>& payload)
+        : m_payload(payload)
+    {
+    }
+
+    size_t remaining() const
+    {
+        return m_payload.size() - m_offset;
+    }
+
+    bool empty() const
+    {
+        return m_offset == m_payload.size();
+    }
+
+    uint8_t readUint8()
+    {
+        require(sizeof(uint8_t));
+        return m_payload[m_offset++];
+    }
+
+    uint16_t readUint16()
+    {
+        return readValue<uint16_t>();
+    }
+
+    float readFloat()
+    {
+        const float value = readValue<float>();
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument("network payload contains non-finite float");
+        }
+        return value;
+    }
+
+    double readDouble()
+    {
+        const double value = readValue<double>();
+        if (!std::isfinite(value)) {
+            throw std::invalid_argument("network payload contains non-finite double");
+        }
+        return value;
+    }
+
+    std::string readString()
+    {
+        const uint16_t length = readValue<uint16_t>();
+        require(length);
+        std::string value(reinterpret_cast<const char*>(m_payload.data() + m_offset), length);
+        m_offset += length;
+        return value;
+    }
+
+private:
+    void require(size_t size) const
+    {
+        if (remaining() < size) {
+            throw std::invalid_argument("truncated network payload");
+        }
+    }
+
+    template <typename T>
+    T readValue()
+    {
+        require(sizeof(T));
+        T value{};
+        std::memcpy(&value, m_payload.data() + m_offset, sizeof(T));
+        m_offset += sizeof(T);
+        return value;
+    }
+
+    const std::vector<uint8_t>& m_payload;
+    size_t m_offset = 0;
+};
 
 } // namespace detail
 
@@ -100,6 +153,9 @@ inline float unpackFloat(const uint8_t*& p) {
  * Prefixed with a uint16_t agent count.
  */
 inline Message serializeAgentStates(const std::vector<AgentSnapshot>& agents) {
+    if (agents.size() > std::numeric_limits<uint16_t>::max()) {
+        throw std::invalid_argument("agent batch exceeds network protocol limit");
+    }
     std::vector<uint8_t> buf;
     uint16_t count = static_cast<uint16_t>(agents.size());
     buf.resize(2);
@@ -120,22 +176,23 @@ inline Message serializeAgentStates(const std::vector<AgentSnapshot>& agents) {
 }
 
 inline std::vector<AgentSnapshot> deserializeAgentStates(const Message& msg) {
-    const uint8_t* p = msg.payload().data();
-    uint16_t count = 0;
-    std::memcpy(&count, p, 2);
-    p += 2;
+    detail::Reader reader(msg.payload());
+    const uint16_t count = reader.readUint16();
     std::vector<AgentSnapshot> agents(count);
     for (uint16_t i = 0; i < count; ++i) {
-        agents[i].name = detail::unpackString(p);
-        agents[i].position[0] = detail::unpackDouble(p);
-        agents[i].position[1] = detail::unpackDouble(p);
-        agents[i].position[2] = detail::unpackDouble(p);
-        agents[i].health = detail::unpackDouble(p);
-        agents[i].yaw = detail::unpackDouble(p);
-        agents[i].entityType = detail::unpackUint8(p);
-        agents[i].faction = detail::unpackUint8(p);
-        agents[i].dead = detail::unpackUint8(p) != 0;
-        agents[i].driverName = detail::unpackString(p);
+        agents[i].name = reader.readString();
+        agents[i].position[0] = reader.readDouble();
+        agents[i].position[1] = reader.readDouble();
+        agents[i].position[2] = reader.readDouble();
+        agents[i].health = reader.readDouble();
+        agents[i].yaw = reader.readDouble();
+        agents[i].entityType = reader.readUint8();
+        agents[i].faction = reader.readUint8();
+        agents[i].dead = reader.readUint8() != 0;
+        agents[i].driverName = reader.readString();
+    }
+    if (!reader.empty()) {
+        throw std::invalid_argument("agent state payload contains trailing data");
     }
     return agents;
 }
@@ -160,11 +217,11 @@ struct KeyEventData {
 };
 
 inline KeyEventData deserializeKeyEvent(const Message& msg) {
-    const uint8_t* p = msg.payload().data();
-    KeyEventData d;
-    d.key = detail::unpackUint8(p);
-    d.action = detail::unpackUint8(p);
-    d.modifiers = detail::unpackUint8(p);
+    detail::Reader reader(msg.payload());
+    KeyEventData d{reader.readUint8(), reader.readUint8(), reader.readUint8()};
+    if (!reader.empty()) {
+        throw std::invalid_argument("key event payload contains trailing data");
+    }
     return d;
 }
 
@@ -224,17 +281,17 @@ inline InputSnapshot deserializeInputSnapshot(const Message& msg) {
     if (msg.payload().size() != InputSnapshot::kSerializedSize) {
         throw std::invalid_argument("invalid InputSnapshot payload size");
     }
-    const uint8_t* p = msg.payload().data();
+    detail::Reader reader(msg.payload());
     InputSnapshot in;
-    in.moveX      = detail::unpackFloat(p);
-    in.moveZ      = detail::unpackFloat(p);
-    in.sprint     = detail::unpackFloat(p);
-    in.lookDeltaX = detail::unpackFloat(p);
-    in.lookDeltaY = detail::unpackFloat(p);
-    in.zoomDelta  = detail::unpackFloat(p);
-    in.lookAxisX  = detail::unpackFloat(p);
-    in.lookAxisY  = detail::unpackFloat(p);
-    uint8_t flags = detail::unpackUint8(p);
+    in.moveX      = reader.readFloat();
+    in.moveZ      = reader.readFloat();
+    in.sprint     = reader.readFloat();
+    in.lookDeltaX = reader.readFloat();
+    in.lookDeltaY = reader.readFloat();
+    in.zoomDelta  = reader.readFloat();
+    in.lookAxisX  = reader.readFloat();
+    in.lookAxisY  = reader.readFloat();
+    const uint8_t flags = reader.readUint8();
     in.jump         = (flags & 1) != 0;
     in.interact     = (flags & 2) != 0;
     in.shout        = (flags & 4) != 0;
@@ -257,8 +314,13 @@ inline Message serializeControl(ControlCode code) {
 }
 
 inline ControlCode deserializeControl(const Message& msg) {
-    const uint8_t* p = msg.payload().data();
-    return static_cast<ControlCode>(detail::unpackUint8(p));
+    detail::Reader reader(msg.payload());
+    const auto code = static_cast<ControlCode>(reader.readUint8());
+    if (!reader.empty() || (code != ControlCode::Pause && code != ControlCode::Resume
+                            && code != ControlCode::Stop)) {
+        throw std::invalid_argument("invalid control payload");
+    }
+    return code;
 }
 
 // ── Player assignment (server → client on connect) ──────────────────────
@@ -271,8 +333,12 @@ inline Message serializePlayerAssignment(const std::string& name) {
 }
 
 inline std::string deserializePlayerAssignment(const Message& msg) {
-    const uint8_t* p = msg.payload().data();
-    return detail::unpackString(p);
+    detail::Reader reader(msg.payload());
+    auto name = reader.readString();
+    if (!reader.empty()) {
+        throw std::invalid_argument("player assignment payload contains trailing data");
+    }
+    return name;
 }
 
 // ── Compute node registration (compute → server) ───────────────────────
@@ -309,18 +375,15 @@ inline Message serializeCollisionCorrection(const CollisionCorrection& correctio
 }
 
 inline CollisionCorrection deserializeCollisionCorrection(const Message& msg) {
-    if (msg.payload().size() < 2 + 3 * sizeof(double)) {
-        throw std::invalid_argument("invalid CollisionCorrection payload size");
-    }
-    const uint8_t* p = msg.payload().data();
+    detail::Reader reader(msg.payload());
     CollisionCorrection correction;
-    correction.targetName = detail::unpackString(p);
-    if (msg.payload().size() != 2 + correction.targetName.size() + 3 * sizeof(double)) {
+    correction.targetName = reader.readString();
+    correction.impulse[0] = reader.readDouble();
+    correction.impulse[1] = reader.readDouble();
+    correction.impulse[2] = reader.readDouble();
+    if (!reader.empty()) {
         throw std::invalid_argument("invalid CollisionCorrection payload size");
     }
-    correction.impulse[0] = detail::unpackDouble(p);
-    correction.impulse[1] = detail::unpackDouble(p);
-    correction.impulse[2] = detail::unpackDouble(p);
     return correction;
 }
 

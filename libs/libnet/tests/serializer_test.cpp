@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "libnet/serializer.hpp"
 
+#include <limits>
+
 using namespace grid::net;
 
 TEST(SerializerTest, AgentStateRoundTrip) {
@@ -43,6 +45,19 @@ TEST(SerializerTest, EmptyAgentList) {
     auto msg = serializeAgentStates({});
     auto decoded = deserializeAgentStates(msg);
     EXPECT_TRUE(decoded.empty());
+}
+
+TEST(SerializerTest, RejectsTruncatedAgentStatePayload) {
+    const Message truncated(MessageType::AgentState, {1, 0, 4, 0, 't', 'e'});
+    EXPECT_THROW(deserializeAgentStates(truncated), std::invalid_argument);
+}
+
+TEST(SerializerTest, RejectsAgentStatePayloadWithTrailingData) {
+    auto message = serializeAgentStates({{"soldier", {0.0, 0.0, 0.0}, 100.0, 0.0, 0, 0, false, ""}});
+    auto payload = message.payload();
+    payload.push_back(0);
+    EXPECT_THROW(deserializeAgentStates(Message(MessageType::AgentState, std::move(payload))),
+                 std::invalid_argument);
 }
 
 TEST(SerializerTest, KeyEventRoundTrip) {
@@ -106,12 +121,26 @@ TEST(SerializerTest, RejectsInvalidInputSnapshotPayloadSize) {
     EXPECT_THROW(deserializeInputSnapshot(truncated), std::invalid_argument);
 }
 
+TEST(SerializerTest, RejectsNonFiniteInputSnapshotValue) {
+    auto message = serializeInputSnapshot({});
+    auto payload = message.payload();
+    const float invalid = std::numeric_limits<float>::quiet_NaN();
+    std::memcpy(payload.data(), &invalid, sizeof(invalid));
+    EXPECT_THROW(deserializeInputSnapshot(Message(MessageType::InputEvent, std::move(payload))),
+                 std::invalid_argument);
+}
+
 TEST(SerializerTest, CollisionCorrectionRoundTrip) {
     CollisionCorrection correction{"civilian_2", {120.0, 0.0, -45.0}};
 
     const auto decoded = deserializeCollisionCorrection(serializeCollisionCorrection(correction));
     EXPECT_EQ(decoded.targetName, correction.targetName);
     EXPECT_EQ(decoded.impulse, correction.impulse);
+}
+
+TEST(SerializerTest, RejectsTruncatedCollisionCorrection) {
+    const Message truncated(MessageType::CollisionCorrection, {8, 0, 'c', 'i'});
+    EXPECT_THROW(deserializeCollisionCorrection(truncated), std::invalid_argument);
 }
 
 TEST(SerializerTest, ControlRoundTrip) {
