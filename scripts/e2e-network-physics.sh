@@ -8,16 +8,17 @@ port="${1:-47991}"
 runtime_seconds="${E2E_RUNTIME_SECONDS:-5}"
 log_dir="$(mktemp -d)"
 server_pid=""
-compute_pid=""
+compute_one_pid=""
+compute_two_pid=""
 
 cleanup() {
     local status=$?
-    for pid in "$compute_pid" "$server_pid"; do
+    for pid in "$compute_one_pid" "$compute_two_pid" "$server_pid"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -INT "$pid" 2>/dev/null || true
         fi
     done
-    for pid in "$compute_pid" "$server_pid"; do
+    for pid in "$compute_one_pid" "$compute_two_pid" "$server_pid"; do
         if [[ -n "$pid" ]]; then
             wait "$pid" 2>/dev/null || true
         fi
@@ -44,6 +45,21 @@ wait_for_log() {
     return 1
 }
 
+wait_for_log_count() {
+    local pattern="$1"
+    local file="$2"
+    local expected_count="$3"
+    for _ in $(seq 1 100); do
+        if [[ "$(grep -c -- "$pattern" "$file" || true)" -ge "$expected_count" ]]; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    printf 'Timed out waiting for %d occurrences of "%s" in %s\n' \
+        "$expected_count" "$pattern" "$file" >&2
+    return 1
+}
+
 cmake -S "$root_dir" -B "$build_dir" -DBUILD_DOC=OFF -DBUILD_TESTING=ON
 cmake --build "$build_dir" --target battlegrid test_physics test_battlegrid net_tests --parallel 2
 "$build_dir/bin/test_physics"
@@ -61,18 +77,30 @@ fi
 
 stdbuf -oL "$build_dir/bin/battlegrid" \
     --compute "127.0.0.1:$port" >"$log_dir/compute.log" 2>&1 &
-compute_pid=$!
+compute_one_pid=$!
 
-wait_for_log 'Compute node connected, delegated' "$log_dir/server.log"
+wait_for_log_count 'Compute node connected, delegated' "$log_dir/server.log" 1
 wait_for_log '\[Compute\] Received terrain from server\.' "$log_dir/compute.log"
 wait_for_log '\[Compute\] Received [0-9][0-9]* agent assignments\.' "$log_dir/compute.log"
 
-sleep "$runtime_seconds"
-kill -INT "$compute_pid"
-wait "$compute_pid"
-compute_pid=""
+stdbuf -oL "$build_dir/bin/battlegrid" \
+    --compute "127.0.0.1:$port" >"$log_dir/compute-two.log" 2>&1 &
+compute_two_pid=$!
 
-wait_for_log 'Compute node disconnected, reclaimed' "$log_dir/server.log"
+wait_for_log '\[Compute\] Received terrain from server\.' "$log_dir/compute-two.log"
+wait_for_log '\[Compute\] Received [0-9][0-9]* agent assignments\.' "$log_dir/compute-two.log"
+wait_for_log_count 'Compute node connected, delegated' "$log_dir/server.log" 2
+
+sleep "$runtime_seconds"
+kill -INT "$compute_one_pid"
+wait "$compute_one_pid"
+compute_one_pid=""
+wait_for_log_count 'Compute node disconnected, reclaimed' "$log_dir/server.log" 1
+
+kill -INT "$compute_two_pid"
+wait "$compute_two_pid"
+compute_two_pid=""
+wait_for_log_count 'Compute node disconnected, reclaimed' "$log_dir/server.log" 2
 kill -INT "$server_pid"
 wait "$server_pid"
 server_pid=""

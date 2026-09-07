@@ -38,6 +38,7 @@ public:
     std::vector<std::string> reclaim(Session* owner);
     bool acceptsSnapshot(const std::string& entityName, Session* owner) const;
     bool isRemoteOwned(const std::string& entityName) const;
+    uint64_t epoch(const std::string& entityName) const;
 
 private:
     mutable std::mutex m_mutex;

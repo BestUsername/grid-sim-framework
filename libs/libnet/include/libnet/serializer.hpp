@@ -14,7 +14,7 @@
 
 namespace grid::net {
 
-inline constexpr uint16_t kProtocolVersion = 1;
+inline constexpr uint16_t kProtocolVersion = 2;
 
 /**
  * @brief Compact agent state snapshot sent over the wire.
@@ -32,6 +32,7 @@ struct AgentSnapshot {
     uint8_t faction = 0;     ///< Faction enum cast to uint8
     bool dead = false;
     std::string driverName;  ///< Name of mounted soldier (vehicles only)
+    uint64_t ownerEpoch = 0;
 };
 
 // ── Low-level pack/unpack helpers ───────────────────────────────────────
@@ -46,6 +47,12 @@ inline void packString(std::vector<uint8_t>& buf, const std::string& s) {
     buf.resize(buf.size() + 2 + len);
     std::memcpy(buf.data() + buf.size() - 2 - len, &len, 2);
     std::memcpy(buf.data() + buf.size() - len, s.data(), len);
+}
+
+inline void packUint64(std::vector<uint8_t>& buf, uint64_t v) {
+    size_t off = buf.size();
+    buf.resize(off + sizeof(v));
+    std::memcpy(buf.data() + off, &v, sizeof(v));
 }
 
 inline void packDouble(std::vector<uint8_t>& buf, double v) {
@@ -90,6 +97,11 @@ public:
     uint16_t readUint16()
     {
         return readValue<uint16_t>();
+    }
+
+    uint64_t readUint64()
+    {
+        return readValue<uint64_t>();
     }
 
     float readFloat()
@@ -173,6 +185,7 @@ inline Message serializeAgentStates(const std::vector<AgentSnapshot>& agents) {
         detail::packUint8(buf, a.faction);
         detail::packUint8(buf, a.dead ? 1 : 0);
         detail::packString(buf, a.driverName);
+        detail::packUint64(buf, a.ownerEpoch);
     }
     return Message(MessageType::AgentState, std::move(buf));
 }
@@ -192,6 +205,7 @@ inline std::vector<AgentSnapshot> deserializeAgentStates(const Message& msg) {
         agents[i].faction = reader.readUint8();
         agents[i].dead = reader.readUint8() != 0;
         agents[i].driverName = reader.readString();
+        agents[i].ownerEpoch = reader.readUint64();
     }
     if (!reader.empty()) {
         throw std::invalid_argument("agent state payload contains trailing data");
@@ -384,31 +398,40 @@ inline std::vector<AgentSnapshot> deserializeAgentAssignment(const Message& msg)
     return deserializeAgentStates(msg);
 }
 
-struct CollisionCorrection {
+struct ContactDecision {
+    uint64_t contactId = 0;
+    uint64_t ownerEpoch = 0;
+    uint64_t decisionTick = 0;
     std::string targetName;
     std::array<double, 3> impulse{};
 };
 
-inline Message serializeCollisionCorrection(const CollisionCorrection& correction) {
+inline Message serializeContactDecision(const ContactDecision& decision) {
     std::vector<uint8_t> buf;
-    detail::packString(buf, correction.targetName);
-    detail::packDouble(buf, correction.impulse[0]);
-    detail::packDouble(buf, correction.impulse[1]);
-    detail::packDouble(buf, correction.impulse[2]);
-    return Message(MessageType::CollisionCorrection, std::move(buf));
+    detail::packUint64(buf, decision.contactId);
+    detail::packUint64(buf, decision.ownerEpoch);
+    detail::packUint64(buf, decision.decisionTick);
+    detail::packString(buf, decision.targetName);
+    detail::packDouble(buf, decision.impulse[0]);
+    detail::packDouble(buf, decision.impulse[1]);
+    detail::packDouble(buf, decision.impulse[2]);
+    return Message(MessageType::ContactDecision, std::move(buf));
 }
 
-inline CollisionCorrection deserializeCollisionCorrection(const Message& msg) {
+inline ContactDecision deserializeContactDecision(const Message& msg) {
     detail::Reader reader(msg.payload());
-    CollisionCorrection correction;
-    correction.targetName = reader.readString();
-    correction.impulse[0] = reader.readDouble();
-    correction.impulse[1] = reader.readDouble();
-    correction.impulse[2] = reader.readDouble();
+    ContactDecision decision;
+    decision.contactId = reader.readUint64();
+    decision.ownerEpoch = reader.readUint64();
+    decision.decisionTick = reader.readUint64();
+    decision.targetName = reader.readString();
+    decision.impulse[0] = reader.readDouble();
+    decision.impulse[1] = reader.readDouble();
+    decision.impulse[2] = reader.readDouble();
     if (!reader.empty()) {
-        throw std::invalid_argument("invalid CollisionCorrection payload size");
+        throw std::invalid_argument("invalid ContactDecision payload size");
     }
-    return correction;
+    return decision;
 }
 
 } // namespace grid::net

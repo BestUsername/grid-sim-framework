@@ -40,9 +40,11 @@ state atomically under the engine lock.
 - BattleGrid's interim cross-service contact policy uses snapshot-driven kinematic proxies on the
   server for compute-owned actors. Server-owned players resolve against those proxies, so they
   cannot pass through a delegated actor; the compute node remains the only solver advancing the
-  delegated actor. This is deliberately one-way: the proxy does not receive collision impulses or
-  gameplay damage. Bidirectional collision response and damage still require a region/contact-owner
-  handoff protocol before they can be enabled.
+  delegated actor. The server routes an idempotent `ContactDecision` to the compute owner when the
+  proxy is contacted; it carries a unique contact ID, the current owner epoch, and the server tick.
+  Compute nodes reject replayed or stale-epoch decisions before applying the impulse locally. The
+  proxy still cannot receive gameplay damage; distributed damage requires a region/contact-owner
+  handoff protocol.
 
 ## Integration points
 

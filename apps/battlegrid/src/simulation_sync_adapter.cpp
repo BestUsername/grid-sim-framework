@@ -129,4 +129,9 @@ bool SimulationSyncAdapter::isRemoteOwned(const std::string& entityName) const
     return m_authority.isRemoteOwned(entityName);
 }
 
+uint64_t SimulationSyncAdapter::epoch(const std::string& entityName) const
+{
+    return m_authority.epoch(entityName);
+}
+
 } // namespace battlegrid

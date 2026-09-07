@@ -549,7 +549,9 @@ int main(int argc, char** argv)
     std::vector<grid::net::AgentSnapshot> pendingAssignments;
     std::atomic<bool> assignmentsReceived{false};
     std::mutex correctionMtx;
-    std::vector<grid::net::CollisionCorrection> pendingCorrections;
+    std::vector<grid::net::ContactDecision> pendingContactDecisions;
+    std::unordered_map<std::string, uint64_t> assignedOwnerEpochs;
+    std::unordered_set<uint64_t> appliedContactDecisions;
 
     if (networkMode == NetworkMode::Client) {
         bridge.connectToServer(clientHost, clientPort,
@@ -605,10 +607,15 @@ int main(int argc, char** argv)
                     assignmentsReceived = true;
                     std::cout << "[Compute] Received " << pendingAssignments.size()
                               << " agent assignments.\n";
-                } else if (msg.type() == grid::net::MessageType::CollisionCorrection) {
-                    auto correction = grid::net::deserializeCollisionCorrection(msg);
+                } else if (msg.type() == grid::net::MessageType::ContactDecision) {
+                    auto decision = grid::net::deserializeContactDecision(msg);
                     std::lock_guard<std::mutex> lk(correctionMtx);
-                    pendingCorrections.push_back(std::move(correction));
+                    const auto epoch = assignedOwnerEpochs.find(decision.targetName);
+                    if (epoch != assignedOwnerEpochs.end()
+                        && epoch->second == decision.ownerEpoch
+                        && appliedContactDecisions.insert(decision.contactId).second) {
+                        pendingContactDecisions.push_back(std::move(decision));
+                    }
                 }
             });
 
@@ -627,7 +634,10 @@ int main(int argc, char** argv)
         {
             std::lock_guard<std::mutex> lk(assignmentMtx);
             for (auto& snap : pendingAssignments)
+            {
                 world.addAgentFromSnapshot(snap);
+                assignedOwnerEpochs[snap.name] = snap.ownerEpoch;
+            }
         }
     }
 
@@ -649,6 +659,8 @@ int main(int argc, char** argv)
     size_t lastLogIndex = 0; // track how many log entries we've printed
     size_t serverLogSentIndex = 0; // server: track how many log entries sent to clients
     battlegrid::SenseIndicatorManager senseIndicators;
+    uint64_t nextContactId = 1;
+    uint64_t simulationTick = 0;
     if (isServerLike) {
         world.setCollisionCorrectionHandler(
             [&](const std::string& targetName, const grid::physics::Vec3& impulse) {
@@ -657,7 +669,8 @@ int main(int argc, char** argv)
                     if (std::find(node.ownedAgents.begin(), node.ownedAgents.end(), targetName)
                             != node.ownedAgents.end()
                         && syncAdapter.acceptsSnapshot(targetName, session)) {
-                        node.session->send(grid::net::serializeCollisionCorrection({targetName, impulse}));
+                        node.session->send(grid::net::serializeContactDecision({
+                            nextContactId++, syncAdapter.epoch(targetName), simulationTick, targetName, impulse}));
                         return;
                     }
                 }
@@ -672,6 +685,7 @@ int main(int argc, char** argv)
     bool running  = true;
     bool showMap  = false;
     while (running && !g_quit.load()) {
+        ++simulationTick;
         auto now = std::chrono::steady_clock::now();
         double dt = std::chrono::duration<double>(now - lastFrame).count();
         lastFrame = now;
@@ -736,9 +750,9 @@ int main(int argc, char** argv)
                 }
 
                 // Mark assigned agents as remote-owned on the server
-                for (auto& name : cn.ownedAgents) {
-                    syncAdapter.assign(name, s.get());
-                    world.setAgentRemoteOwned(name, true);
+                for (auto& snap : assignments) {
+                    snap.ownerEpoch = syncAdapter.assign(snap.name, s.get());
+                    world.setAgentRemoteOwned(snap.name, true);
                 }
 
                 s->send(grid::net::serializeAgentAssignment(assignments));
@@ -937,10 +951,10 @@ int main(int argc, char** argv)
         if (networkMode == NetworkMode::Compute) {
             world.engine().withAgentsLock([&] {
                 std::lock_guard<std::mutex> lk(correctionMtx);
-                for (const auto& correction : pendingCorrections) {
-                    world.applyCollisionCorrection(correction.targetName, correction.impulse);
+                for (const auto& decision : pendingContactDecisions) {
+                    world.applyCollisionCorrection(decision.targetName, decision.impulse);
                 }
-                pendingCorrections.clear();
+                pendingContactDecisions.clear();
                 world.stepCollisions(dt, positions);
             });
         }

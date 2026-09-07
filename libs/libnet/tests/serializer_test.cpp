@@ -140,17 +140,20 @@ TEST(SerializerTest, RejectsNonFiniteInputSnapshotValue) {
                  std::invalid_argument);
 }
 
-TEST(SerializerTest, CollisionCorrectionRoundTrip) {
-    CollisionCorrection correction{"civilian_2", {120.0, 0.0, -45.0}};
+TEST(SerializerTest, ContactDecisionRoundTrip) {
+    ContactDecision decision{42, 7, 120, "civilian_2", {120.0, 0.0, -45.0}};
 
-    const auto decoded = deserializeCollisionCorrection(serializeCollisionCorrection(correction));
-    EXPECT_EQ(decoded.targetName, correction.targetName);
-    EXPECT_EQ(decoded.impulse, correction.impulse);
+    const auto decoded = deserializeContactDecision(serializeContactDecision(decision));
+    EXPECT_EQ(decoded.contactId, decision.contactId);
+    EXPECT_EQ(decoded.ownerEpoch, decision.ownerEpoch);
+    EXPECT_EQ(decoded.decisionTick, decision.decisionTick);
+    EXPECT_EQ(decoded.targetName, decision.targetName);
+    EXPECT_EQ(decoded.impulse, decision.impulse);
 }
 
-TEST(SerializerTest, RejectsTruncatedCollisionCorrection) {
-    const Message truncated(MessageType::CollisionCorrection, {8, 0, 'c', 'i'});
-    EXPECT_THROW(deserializeCollisionCorrection(truncated), std::invalid_argument);
+TEST(SerializerTest, RejectsTruncatedContactDecision) {
+    const Message truncated(MessageType::ContactDecision, {8, 0, 'c', 'i'});
+    EXPECT_THROW(deserializeContactDecision(truncated), std::invalid_argument);
 }
 
 TEST(SerializerTest, ControlRoundTrip) {

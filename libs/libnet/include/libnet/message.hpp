@@ -27,8 +27,8 @@ enum class MessageType : uint8_t {
     ComputeRegister = 7,
     /// Agent assignment (server → compute node on registration).
     AgentAssignment = 8,
-    /// Server-authored impulse applied by the owning compute node.
-    CollisionCorrection = 9,
+    /// Server-authored, idempotent physics outcome for a compute-owned entity.
+    ContactDecision = 9,
     /// Initial wire-protocol version negotiation.
     ProtocolHello = 10,
 };
