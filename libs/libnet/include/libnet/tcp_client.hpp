@@ -36,6 +36,9 @@ public:
     /// Send a message to the server.
     void send(const Message& msg);
 
+    /// Close the socket without joining the I/O thread.
+    void close();
+
     void stop();
 
     bool isConnected() const;

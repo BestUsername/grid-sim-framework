@@ -66,6 +66,9 @@ void Session::close()
     if (m_closed.exchange(true)) {
         return;
     }
+    if (m_onClose) {
+        m_onClose(shared_from_this());
+    }
     boost::system::error_code error;
     m_socket.shutdown(tcp::socket::shutdown_both, error);
     m_socket.close(error);

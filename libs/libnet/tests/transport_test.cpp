@@ -191,6 +191,33 @@ TEST(NetworkBridgeTest, BridgesClientInputAndServerState)
     EXPECT_FALSE(server_bridge.isRunning());
 }
 
+TEST(NetworkBridgeTest, RejectsIncompatibleProtocolVersion)
+{
+    const auto port = reserveLocalPort();
+    std::atomic<int> connectCount{0};
+    std::atomic<int> messageCount{0};
+
+    NetworkBridge serverBridge;
+    serverBridge.hostServer(
+        port,
+        [&](std::shared_ptr<Session>, Message) { ++messageCount; },
+        [&](std::shared_ptr<Session>) { ++connectCount; });
+
+    boost::asio::io_context ioContext;
+    boost::asio::ip::tcp::socket socket(ioContext);
+    socket.connect({boost::asio::ip::address_v4::loopback(), port});
+    ASSERT_TRUE(waitUntil([&] { return serverBridge.clientCount() == 1; }));
+
+    const auto hello = serializeProtocolHello(kProtocolVersion + 1).serialize();
+    boost::asio::write(socket, boost::asio::buffer(hello));
+
+    EXPECT_TRUE(waitUntil([&] { return serverBridge.clientCount() == 0; }));
+    EXPECT_EQ(connectCount.load(), 0);
+    EXPECT_EQ(messageCount.load(), 0);
+
+    serverBridge.stop();
+}
+
 TEST(NetworkBridgeTest, DefaultStateNoOpMethodsAndSessionCallbacks)
 {
     NetworkBridge idle_bridge;

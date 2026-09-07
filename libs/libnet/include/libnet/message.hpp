@@ -29,6 +29,8 @@ enum class MessageType : uint8_t {
     AgentAssignment = 8,
     /// Server-authored impulse applied by the owning compute node.
     CollisionCorrection = 9,
+    /// Initial wire-protocol version negotiation.
+    ProtocolHello = 10,
 };
 
 /**

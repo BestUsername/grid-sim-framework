@@ -47,6 +47,16 @@ TEST(SerializerTest, EmptyAgentList) {
     EXPECT_TRUE(decoded.empty());
 }
 
+TEST(SerializerTest, ProtocolHelloRoundTrip) {
+    EXPECT_EQ(deserializeProtocolHello(serializeProtocolHello()), kProtocolVersion);
+    EXPECT_EQ(deserializeProtocolHello(serializeProtocolHello(42)), 42);
+}
+
+TEST(SerializerTest, RejectsInvalidProtocolHello) {
+    EXPECT_THROW(deserializeProtocolHello(Message(MessageType::ProtocolHello, {1})), std::invalid_argument);
+    EXPECT_THROW(deserializeProtocolHello(Message(MessageType::Control, {1, 0})), std::invalid_argument);
+}
+
 TEST(SerializerTest, RejectsTruncatedAgentStatePayload) {
     const Message truncated(MessageType::AgentState, {1, 0, 4, 0, 't', 'e'});
     EXPECT_THROW(deserializeAgentStates(truncated), std::invalid_argument);

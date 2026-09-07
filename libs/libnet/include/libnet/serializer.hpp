@@ -14,6 +14,8 @@
 
 namespace grid::net {
 
+inline constexpr uint16_t kProtocolVersion = 1;
+
 /**
  * @brief Compact agent state snapshot sent over the wire.
  *
@@ -195,6 +197,28 @@ inline std::vector<AgentSnapshot> deserializeAgentStates(const Message& msg) {
         throw std::invalid_argument("agent state payload contains trailing data");
     }
     return agents;
+}
+
+// ── Protocol negotiation ────────────────────────────────────────────────
+
+inline Message serializeProtocolHello(uint16_t version = kProtocolVersion)
+{
+    std::vector<uint8_t> buf(2);
+    std::memcpy(buf.data(), &version, sizeof(version));
+    return Message(MessageType::ProtocolHello, std::move(buf));
+}
+
+inline uint16_t deserializeProtocolHello(const Message& msg)
+{
+    if (msg.type() != MessageType::ProtocolHello) {
+        throw std::invalid_argument("expected protocol hello message");
+    }
+    detail::Reader reader(msg.payload());
+    const auto version = reader.readUint16();
+    if (!reader.empty()) {
+        throw std::invalid_argument("protocol hello payload contains trailing data");
+    }
+    return version;
 }
 
 // ── InputEvent serialization (key events only for now) ──────────────────

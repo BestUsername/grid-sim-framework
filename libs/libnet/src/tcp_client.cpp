@@ -59,9 +59,7 @@ void TcpClient::send(const Message& msg)
 
 void TcpClient::stop()
 {
-    if (m_closed.exchange(true)) {
-        return;
-    }
+    close();
     m_ioc.stop();
     if (m_thread.joinable()) {
         if (m_thread.get_id() == std::this_thread::get_id()) {
@@ -70,7 +68,15 @@ void TcpClient::stop()
             m_thread.join();
         }
     }
+}
+
+void TcpClient::close()
+{
+    if (m_closed.exchange(true)) {
+        return;
+    }
     boost::system::error_code error;
+    m_socket.shutdown(tcp::socket::shutdown_both, error);
     m_socket.close(error);
 }
 
