@@ -7,6 +7,7 @@
 namespace {
 
 constexpr uint32_t kMaxPayloadSize = 1024 * 1024;
+constexpr size_t kMaxPendingWrites = 256;
 
 } // namespace
 
@@ -28,8 +29,25 @@ void Session::start()
 void Session::send(const Message& msg)
 {
     auto wire = msg.serialize();
+    const bool isSnapshot = msg.type() == MessageType::AgentState;
     auto self = shared_from_this();
-    boost::asio::post(m_writeStrand, [this, self, wire = std::move(wire)]() mutable {
+    boost::asio::post(m_writeStrand, [this, self, wire = std::move(wire), isSnapshot]() mutable {
+        if (m_closed) {
+            return;
+        }
+
+        if (isSnapshot
+            && m_writeQueue.size() > 1
+            && m_writeQueue.back()[Message::kHeaderSize - 1]
+                == static_cast<uint8_t>(MessageType::AgentState)) {
+            m_writeQueue.back() = std::move(wire);
+            return;
+        }
+        if (m_writeQueue.size() >= kMaxPendingWrites) {
+            handleError();
+            return;
+        }
+
         const bool writeInProgress = !m_writeQueue.empty();
         m_writeQueue.push_back(std::move(wire));
         if (!writeInProgress) {
@@ -45,6 +63,9 @@ bool Session::isOpen() const
 
 void Session::close()
 {
+    if (m_closed.exchange(true)) {
+        return;
+    }
     boost::system::error_code error;
     m_socket.shutdown(tcp::socket::shutdown_both, error);
     m_socket.close(error);
@@ -137,6 +158,9 @@ void Session::asyncWrite()
 
 void Session::handleError()
 {
+    if (m_closed.exchange(true)) {
+        return;
+    }
     if (m_onClose) {
         m_onClose(shared_from_this());
     }
@@ -163,7 +187,11 @@ void TcpServer::stop()
 {
     m_ioc.stop();
     if (m_thread.joinable()) {
-        m_thread.join();
+        if (m_thread.get_id() == std::this_thread::get_id()) {
+            m_thread.detach();
+        } else {
+            m_thread.join();
+        }
     }
 
     std::lock_guard<std::mutex> lock(m_sessionsMutex);

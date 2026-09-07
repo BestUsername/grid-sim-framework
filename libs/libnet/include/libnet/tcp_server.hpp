@@ -5,11 +5,11 @@
 
 #include <boost/asio.hpp>
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -57,7 +57,7 @@ private:
     std::vector<uint8_t> m_headerBuf;
     std::vector<uint8_t> m_payloadBuf;
 
-    std::mutex m_writeMutex;
+    std::atomic_bool m_closed{false};
     std::deque<std::vector<uint8_t>> m_writeQueue;
 };
 

@@ -6,6 +6,7 @@
 namespace {
 
 constexpr uint32_t kMaxPayloadSize = 1024 * 1024;
+constexpr size_t kMaxPendingWrites = 256;
 
 } // namespace
 
@@ -14,6 +15,7 @@ namespace grid::net {
 TcpClient::TcpClient(const std::string& host, uint16_t port, MessageHandler onMessage)
     : m_onMessage(std::move(onMessage))
     , m_socket(m_ioc)
+    , m_writeStrand(m_socket.get_executor())
 {
     tcp::resolver resolver(m_ioc);
     auto endpoints = resolver.resolve(host, std::to_string(port));
@@ -29,22 +31,44 @@ void TcpClient::start()
 void TcpClient::send(const Message& msg)
 {
     auto wire = msg.serialize();
-    bool write_in_progress = false;
-    {
-        std::lock_guard<std::mutex> lock(m_writeMutex);
-        write_in_progress = !m_writeQueue.empty();
+    const bool isSnapshot = msg.type() == MessageType::AgentState;
+    boost::asio::post(m_writeStrand, [this, wire = std::move(wire), isSnapshot]() mutable {
+        if (m_closed) {
+            return;
+        }
+
+        if (isSnapshot
+            && m_writeQueue.size() > 1
+            && m_writeQueue.back()[Message::kHeaderSize - 1]
+                == static_cast<uint8_t>(MessageType::AgentState)) {
+            m_writeQueue.back() = std::move(wire);
+            return;
+        }
+        if (m_writeQueue.size() >= kMaxPendingWrites) {
+            stop();
+            return;
+        }
+
+        const bool writeInProgress = !m_writeQueue.empty();
         m_writeQueue.push_back(std::move(wire));
-    }
-    if (!write_in_progress) {
-        boost::asio::post(m_ioc, [this] { asyncWrite(); });
-    }
+        if (!writeInProgress) {
+            asyncWrite();
+        }
+    });
 }
 
 void TcpClient::stop()
 {
+    if (m_closed.exchange(true)) {
+        return;
+    }
     m_ioc.stop();
     if (m_thread.joinable()) {
-        m_thread.join();
+        if (m_thread.get_id() == std::this_thread::get_id()) {
+            m_thread.detach();
+        } else {
+            m_thread.join();
+        }
     }
     boost::system::error_code error;
     m_socket.close(error);
@@ -115,7 +139,6 @@ void TcpClient::deliverMessage()
 
 void TcpClient::asyncWrite()
 {
-    std::lock_guard<std::mutex> lock(m_writeMutex);
     if (m_writeQueue.empty()) {
         return;
     }
@@ -123,18 +146,16 @@ void TcpClient::asyncWrite()
     boost::asio::async_write(
         m_socket,
         boost::asio::buffer(m_writeQueue.front()),
-        [this](boost::system::error_code error, size_t) {
+        boost::asio::bind_executor(m_writeStrand, [this](boost::system::error_code error, size_t) {
             if (error) {
+                stop();
                 return;
             }
 
-            {
-                std::lock_guard<std::mutex> inner_lock(m_writeMutex);
-                m_writeQueue.pop_front();
-            }
+            m_writeQueue.pop_front();
 
             asyncWrite();
-        });
+        }));
 }
 
 } // namespace grid::net
