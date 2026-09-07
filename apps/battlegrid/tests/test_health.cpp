@@ -3,6 +3,7 @@
 #include "vehicle.hpp"
 #include "terrain.hpp"
 #include "battlegrid_world.hpp"
+#include "authority_registry.hpp"
 #include "libphysics/collision_event.hpp"
 #include "libsim/base_engine.hpp"
 
@@ -45,6 +46,37 @@ grid::physics::CollisionEvent makeHit(const std::string& self,
 } // namespace
 
 // ── Soldier health ──────────────────────────────────────────────────
+
+TEST(AuthorityRegistryTest, AcceptsOnlyCurrentOwnerAndInvalidatesReclaimedOwnership)
+{
+    AuthorityRegistry registry;
+    const auto firstOwner = reinterpret_cast<AuthorityRegistry::Owner>(1);
+    const auto secondOwner = reinterpret_cast<AuthorityRegistry::Owner>(2);
+
+    const auto firstEpoch = registry.assign("civilian_1", firstOwner);
+    EXPECT_TRUE(registry.acceptsSnapshot("civilian_1", firstOwner));
+    EXPECT_FALSE(registry.acceptsSnapshot("civilian_1", secondOwner));
+    EXPECT_TRUE(registry.isRemoteOwned("civilian_1"));
+
+    const auto reclaimed = registry.releaseOwner(firstOwner);
+    ASSERT_EQ(reclaimed, (std::vector<std::string>{"civilian_1"}));
+    EXPECT_FALSE(registry.acceptsSnapshot("civilian_1", firstOwner));
+    EXPECT_FALSE(registry.isRemoteOwned("civilian_1"));
+    EXPECT_GT(registry.epoch("civilian_1"), firstEpoch);
+}
+
+TEST(AuthorityRegistryTest, ReassignmentRejectsPreviousOwner)
+{
+    AuthorityRegistry registry;
+    const auto firstOwner = reinterpret_cast<AuthorityRegistry::Owner>(1);
+    const auto secondOwner = reinterpret_cast<AuthorityRegistry::Owner>(2);
+
+    const auto firstEpoch = registry.assign("soldier_1", firstOwner);
+    const auto secondEpoch = registry.assign("soldier_1", secondOwner);
+    EXPECT_GT(secondEpoch, firstEpoch);
+    EXPECT_FALSE(registry.acceptsSnapshot("soldier_1", firstOwner));
+    EXPECT_TRUE(registry.acceptsSnapshot("soldier_1", secondOwner));
+}
 
 TEST(SoldierHealthTest, StartsAtFullHealth)
 {

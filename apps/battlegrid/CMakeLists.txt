@@ -10,6 +10,7 @@ add_executable(battlegrid
     src/vehicle.cpp
     src/input_map.cpp
     src/player_controller.cpp
+    src/authority_registry.cpp
     src/battlegrid_world.cpp
     src/gl_display.cpp
     src/map_overlay.cpp

@@ -1,5 +1,6 @@
 #include "defines.hpp"
 #include "battlegrid_world.hpp"
+#include "authority_registry.hpp"
 #include "gl_display.hpp"
 #include "input_map.hpp"
 #include "player_controller.hpp"
@@ -512,6 +513,7 @@ int main(int argc, char** argv)
     };
     std::mutex computeMtx;
     std::unordered_map<grid::net::Session*, ComputeNode> computeNodes;
+    battlegrid::AuthorityRegistry authorityRegistry;
     std::vector<std::shared_ptr<grid::net::Session>> pendingComputeNodes;
     // Latest position data received from compute nodes
     std::mutex computePosMtx;
@@ -538,7 +540,9 @@ int main(int argc, char** argv)
                     auto snaps = grid::net::deserializeAgentStates(msg);
                     std::lock_guard<std::mutex> lk(computePosMtx);
                     for (auto& s : snaps) {
-                        computeSnapshots[s.name] = std::move(s);
+                        if (authorityRegistry.acceptsSnapshot(s.name, session.get())) {
+                            computeSnapshots[s.name] = std::move(s);
+                        }
                     }
                 }
             },
@@ -680,7 +684,8 @@ int main(int argc, char** argv)
                 std::lock_guard<std::mutex> lk(computeMtx);
                 for (const auto& [session, node] : computeNodes) {
                     if (std::find(node.ownedAgents.begin(), node.ownedAgents.end(), targetName)
-                        != node.ownedAgents.end()) {
+                            != node.ownedAgents.end()
+                        && authorityRegistry.acceptsSnapshot(targetName, session)) {
                         node.session->send(grid::net::serializeCollisionCorrection({targetName, impulse}));
                         return;
                     }
@@ -732,18 +737,7 @@ int main(int argc, char** argv)
                         }
                         if (isClient) continue;
                     }
-                    // Skip agents already assigned to another compute node
-                    {
-                        std::lock_guard<std::mutex> clk(computeMtx);
-                        bool alreadyOwned = false;
-                        for (auto& [sess, existing] : computeNodes) {
-                            for (auto& n : existing.ownedAgents) {
-                                if (n == a->name()) { alreadyOwned = true; break; }
-                            }
-                            if (alreadyOwned) break;
-                        }
-                        if (alreadyOwned) continue;
-                    }
+                    if (authorityRegistry.isRemoteOwned(a->name())) continue;
 
                     // Build snapshot for this agent
                     grid::net::AgentSnapshot snap;
@@ -773,8 +767,10 @@ int main(int argc, char** argv)
                 }
 
                 // Mark assigned agents as remote-owned on the server
-                for (auto& name : cn.ownedAgents)
+                for (auto& name : cn.ownedAgents) {
+                    authorityRegistry.assign(name, s.get());
                     world.setAgentRemoteOwned(name, true);
+                }
 
                 s->send(grid::net::serializeAgentAssignment(assignments));
                 std::cout << "Compute node connected, delegated "
@@ -813,10 +809,17 @@ int main(int argc, char** argv)
                     std::lock_guard<std::mutex> clk(computeMtx);
                     auto it = computeNodes.find(s);
                     if (it != computeNodes.end()) {
-                        for (auto& name : it->second.ownedAgents)
+                        const auto reclaimed = authorityRegistry.releaseOwner(s);
+                        {
+                            std::lock_guard<std::mutex> snapshotLock(computePosMtx);
+                            for (const auto& name : reclaimed) {
+                                computeSnapshots.erase(name);
+                            }
+                        }
+                        for (const auto& name : reclaimed)
                             world.setAgentRemoteOwned(name, false);
                         std::cout << "Compute node disconnected, reclaimed "
-                                  << it->second.ownedAgents.size() << " agents.\n";
+                                  << reclaimed.size() << " agents.\n";
                         computeNodes.erase(it);
                     }
                 }
