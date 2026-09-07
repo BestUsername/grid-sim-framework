@@ -883,6 +883,39 @@ void GLDisplay::renderFrame(
                 float cz = static_cast<float>(z) + 0.5f;
 
                 drawCube(vp, cx, cy, cz, 1.0f, tileH, 1.0f, r, g, b);
+
+                if (t == TerrainType::Water) {
+                    continue;
+                }
+
+                const float waterHeight = static_cast<float>(terrainHeight(TerrainType::Water));
+                const auto drawWaterEdge = [&](int dx, int dz) {
+                    const int neighborX = static_cast<int>(x) + dx;
+                    const int neighborZ = static_cast<int>(z) + dz;
+                    if (neighborX < 0 || neighborZ < 0
+                        || neighborX >= static_cast<int>(W) || neighborZ >= static_cast<int>(H)
+                        || m_terrain.at(static_cast<size_t>(neighborX), static_cast<size_t>(neighborZ))
+                            != TerrainType::Water) {
+                        return;
+                    }
+
+                    const float wallHeight = fy - waterHeight;
+                    const float wallY = waterHeight + wallHeight * 0.5f;
+                    constexpr float dirtR = 0.36f;
+                    constexpr float dirtG = 0.24f;
+                    constexpr float dirtB = 0.12f;
+                    if (dx != 0) {
+                        drawCube(vp, cx + static_cast<float>(dx) * 0.5f, wallY, cz,
+                                 0.06f, wallHeight, 1.0f, dirtR, dirtG, dirtB);
+                    } else {
+                        drawCube(vp, cx, wallY, cz + static_cast<float>(dz) * 0.5f,
+                                 1.0f, wallHeight, 0.06f, dirtR, dirtG, dirtB);
+                    }
+                };
+                drawWaterEdge(-1, 0);
+                drawWaterEdge(1, 0);
+                drawWaterEdge(0, -1);
+                drawWaterEdge(0, 1);
             }
         }
     }
@@ -986,9 +1019,11 @@ void GLDisplay::renderFrame(
                 drawPart(0.0f, 0.1f, 0.0f,  1.2f, 0.3f, 2.2f,
                          0.4f, 0.4f, 0.4f);
             } else {
-                drawPart(0.0f, 0.4f, 0.0f,   1.2f, 0.8f, 2.2f,
+                drawPart(0.0f, static_cast<float>(LandVehicle::kChassisCenterHeight), 0.0f,
+                         1.2f, 0.8f, 2.2f,
                          0.4f, 0.45f, 0.25f);                                     // body
-                drawPart(0.0f, 1.0f, 0.1f,   0.5f, 0.3f, 0.5f,
+                drawPart(0.0f, static_cast<float>(LandVehicle::kChassisCenterHeight + 0.6), 0.1f,
+                         0.5f, 0.3f, 0.5f,
                          0.35f, 0.38f, 0.22f);                                    // turret
                 for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
                     const auto wheel = positions.find(landV->wheelName(index));
