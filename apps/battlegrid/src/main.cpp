@@ -1,12 +1,12 @@
 #include "defines.hpp"
 #include "battlegrid_world.hpp"
-#include "authority_registry.hpp"
 #include "gl_display.hpp"
 #include "input_map.hpp"
 #include "player_controller.hpp"
 #include "entity_types.hpp"
 #include "terrain.hpp"
 #include "sense_indicator.hpp"
+#include "simulation_sync_adapter.hpp"
 
 #include "libsim/base_engine.hpp"
 #include "libsim/game_log.hpp"
@@ -500,10 +500,7 @@ int main(int argc, char** argv)
     grid::net::NetworkBridge bridge;
     std::mutex remotesMtx;
     std::unordered_map<grid::net::Session*, RemotePlayer> remotePlayers;
-    // Pending connections handled on the game-loop thread
-    std::mutex pendingMtx;
-    std::vector<std::shared_ptr<grid::net::Session>> pendingConnects;
-    std::vector<grid::net::Session*> pendingDisconnects;
+    battlegrid::SimulationSyncAdapter syncAdapter;
     std::atomic<int> nextClientId{1};
 
     // Compute-node tracking (server side)
@@ -513,11 +510,6 @@ int main(int argc, char** argv)
     };
     std::mutex computeMtx;
     std::unordered_map<grid::net::Session*, ComputeNode> computeNodes;
-    battlegrid::AuthorityRegistry authorityRegistry;
-    std::vector<std::shared_ptr<grid::net::Session>> pendingComputeNodes;
-    // Latest position data received from compute nodes
-    std::mutex computePosMtx;
-    std::unordered_map<std::string, grid::net::AgentSnapshot> computeSnapshots;
 
     if (isServerLike) {
         try {
@@ -525,36 +517,15 @@ int main(int argc, char** argv)
             serverPort,
             // Per-session message handler (runs on IO thread)
             [&](std::shared_ptr<grid::net::Session> session, grid::net::Message msg) {
-                if (msg.type() == grid::net::MessageType::InputEvent &&
-                    msg.payload().size() == grid::net::InputSnapshot::kSerializedSize) {
-                    auto input = grid::net::deserializeInputSnapshot(msg);
-                    std::lock_guard<std::mutex> lk(remotesMtx);
-                    auto it = remotePlayers.find(session.get());
-                    if (it != remotePlayers.end())
-                        mergeRemoteInput(it->second.input, input);
-                } else if (msg.type() == grid::net::MessageType::ComputeRegister) {
-                    std::lock_guard<std::mutex> lk(pendingMtx);
-                    pendingComputeNodes.push_back(session);
-                } else if (msg.type() == grid::net::MessageType::AgentState) {
-                    // Solved state updates from a compute node.
-                    auto snaps = grid::net::deserializeAgentStates(msg);
-                    std::lock_guard<std::mutex> lk(computePosMtx);
-                    for (auto& s : snaps) {
-                        if (authorityRegistry.acceptsSnapshot(s.name, session.get())) {
-                            computeSnapshots[s.name] = std::move(s);
-                        }
-                    }
-                }
+                syncAdapter.onMessage(session, std::move(msg));
             },
             // Connect handler
             [&](std::shared_ptr<grid::net::Session> session) {
-                std::lock_guard<std::mutex> lk(pendingMtx);
-                pendingConnects.push_back(session);
+                syncAdapter.queueConnection(session);
             },
             // Disconnect handler
             [&](std::shared_ptr<grid::net::Session> session) {
-                std::lock_guard<std::mutex> lk(pendingMtx);
-                pendingDisconnects.push_back(session.get());
+                syncAdapter.queueDisconnection(session);
             });
         } catch (const boost::system::system_error& error) {
             std::cerr << "Unable to listen on port " << serverPort << ": " << error.what() << "\n";
@@ -685,7 +656,7 @@ int main(int argc, char** argv)
                 for (const auto& [session, node] : computeNodes) {
                     if (std::find(node.ownedAgents.begin(), node.ownedAgents.end(), targetName)
                             != node.ownedAgents.end()
-                        && authorityRegistry.acceptsSnapshot(targetName, session)) {
+                        && syncAdapter.acceptsSnapshot(targetName, session)) {
                         node.session->send(grid::net::serializeCollisionCorrection({targetName, impulse}));
                         return;
                     }
@@ -711,10 +682,8 @@ int main(int argc, char** argv)
         // ── Server / Headless: handle pending connect / disconnect ───
         if (isServerLike) {
             world.engine().withAgentsLock([&] {
-            std::lock_guard<std::mutex> lk(pendingMtx);
-
             // Handle compute node registrations
-            for (auto& s : pendingComputeNodes) {
+            for (auto& s : syncAdapter.takePendingComputeNodes()) {
                 ComputeNode cn;
                 cn.session = s;
 
@@ -737,7 +706,7 @@ int main(int argc, char** argv)
                         }
                         if (isClient) continue;
                     }
-                    if (authorityRegistry.isRemoteOwned(a->name())) continue;
+                    if (syncAdapter.isRemoteOwned(a->name())) continue;
 
                     // Build snapshot for this agent
                     grid::net::AgentSnapshot snap;
@@ -768,7 +737,7 @@ int main(int argc, char** argv)
 
                 // Mark assigned agents as remote-owned on the server
                 for (auto& name : cn.ownedAgents) {
-                    authorityRegistry.assign(name, s.get());
+                    syncAdapter.assign(name, s.get());
                     world.setAgentRemoteOwned(name, true);
                 }
 
@@ -780,10 +749,8 @@ int main(int argc, char** argv)
                     computeNodes[s.get()] = std::move(cn);
                 }
             }
-            pendingComputeNodes.clear();
-
             // Handle regular client connections
-            for (auto& s : pendingConnects) {
+            for (auto& s : syncAdapter.takePendingConnections()) {
                 // Skip if this is a compute node (already handled above)
                 {
                     std::lock_guard<std::mutex> clk(computeMtx);
@@ -796,10 +763,8 @@ int main(int argc, char** argv)
                 std::lock_guard<std::mutex> rlk(remotesMtx);
                 remotePlayers[s.get()] = {soldier, {}, 0.0, 0.3};
             }
-            pendingConnects.clear();
-
             // Handle disconnections
-            for (auto* s : pendingDisconnects) {
+            for (auto* s : syncAdapter.takePendingDisconnections()) {
                 {
                     std::lock_guard<std::mutex> rlk(remotesMtx);
                     remotePlayers.erase(s);
@@ -809,13 +774,7 @@ int main(int argc, char** argv)
                     std::lock_guard<std::mutex> clk(computeMtx);
                     auto it = computeNodes.find(s);
                     if (it != computeNodes.end()) {
-                        const auto reclaimed = authorityRegistry.releaseOwner(s);
-                        {
-                            std::lock_guard<std::mutex> snapshotLock(computePosMtx);
-                            for (const auto& name : reclaimed) {
-                                computeSnapshots.erase(name);
-                            }
-                        }
+                        const auto reclaimed = syncAdapter.reclaim(s);
                         for (const auto& name : reclaimed)
                             world.setAgentRemoteOwned(name, false);
                         std::cout << "Compute node disconnected, reclaimed "
@@ -824,7 +783,6 @@ int main(int argc, char** argv)
                     }
                 }
             }
-            pendingDisconnects.clear();
             });
         }
 
@@ -946,6 +904,12 @@ int main(int argc, char** argv)
                 // ── Server / Headless: apply remote client inputs ───────
                 if (isServerLike) {
                     std::lock_guard<std::mutex> rlk(remotesMtx);
+                    for (const auto& [session, input] : syncAdapter.takeRemoteInputs()) {
+                        const auto player = remotePlayers.find(session);
+                        if (player != remotePlayers.end()) {
+                            mergeRemoteInput(player->second.input, input);
+                        }
+                    }
                     for (auto& [sess, rp] : remotePlayers) {
                         applyRemoteInput(rp, dt, world, positions);
                         positions[rp.soldier->name()] = rp.soldier->location();
@@ -956,11 +920,9 @@ int main(int argc, char** argv)
 
                 // ── Server / Headless: apply compute node positions ─────
                 if (isServerLike) {
-                    std::lock_guard<std::mutex> lk(computePosMtx);
-                    std::vector<grid::net::AgentSnapshot> snapshots;
-                    snapshots.reserve(computeSnapshots.size());
-                    for (const auto& [name, snapshot] : computeSnapshots) {
-                        snapshots.push_back(snapshot);
+                    const auto snapshots = syncAdapter.takeComputeSnapshots();
+                    for (const auto& snapshot : snapshots) {
+                        const auto& name = snapshot.name;
                         positions[name] = COORD{
                             snapshot.position[0], snapshot.position[1], snapshot.position[2]};
                     }

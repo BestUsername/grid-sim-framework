@@ -9,6 +9,7 @@ add_executable(test_battlegrid
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/input_map.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/player_controller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/authority_registry.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/simulation_sync_adapter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/battlegrid_world.cpp
 )
 

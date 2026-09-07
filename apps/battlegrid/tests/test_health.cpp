@@ -4,6 +4,7 @@
 #include "terrain.hpp"
 #include "battlegrid_world.hpp"
 #include "authority_registry.hpp"
+#include "simulation_sync_adapter.hpp"
 #include "libphysics/collision_event.hpp"
 #include "libsim/base_engine.hpp"
 
@@ -76,6 +77,26 @@ TEST(AuthorityRegistryTest, ReassignmentRejectsPreviousOwner)
     EXPECT_GT(secondEpoch, firstEpoch);
     EXPECT_FALSE(registry.acceptsSnapshot("soldier_1", firstOwner));
     EXPECT_TRUE(registry.acceptsSnapshot("soldier_1", secondOwner));
+}
+
+TEST(SimulationSyncAdapterTest, RejectsStaleComputeSnapshotsAfterReclamation)
+{
+    SimulationSyncAdapter adapter;
+    const auto owner = reinterpret_cast<grid::net::Session*>(1);
+    const std::vector<grid::net::AgentSnapshot> snapshots = {
+        {"civilian_1", {1.0, 0.0, 2.0}, 100.0, 0.0, 1, 0, false, ""},
+    };
+
+    adapter.onMessage(owner, grid::net::serializeAgentStates(snapshots));
+    EXPECT_TRUE(adapter.takeComputeSnapshots().empty());
+
+    adapter.assign("civilian_1", owner);
+    adapter.onMessage(owner, grid::net::serializeAgentStates(snapshots));
+    ASSERT_EQ(adapter.takeComputeSnapshots().size(), 1u);
+
+    EXPECT_EQ(adapter.reclaim(owner), (std::vector<std::string>{"civilian_1"}));
+    adapter.onMessage(owner, grid::net::serializeAgentStates(snapshots));
+    EXPECT_TRUE(adapter.takeComputeSnapshots().empty());
 }
 
 TEST(SoldierHealthTest, StartsAtFullHealth)
