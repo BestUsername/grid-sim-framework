@@ -41,6 +41,23 @@ TEST(SerializerTest, AgentStateRoundTrip) {
     EXPECT_DOUBLE_EQ(decoded[2].yaw, 3.14);
 }
 
+TEST(SerializerTest, LandVehicleWheelPresentationRoundTrip) {
+    AgentSnapshot vehicle;
+    vehicle.name = "humvee_1";
+    vehicle.entityType = 2;
+    vehicle.hasWheelPresentation = true;
+    vehicle.wheelPositions = {{{1.0, 0.25, 2.0},
+                               {2.0, 0.35, 2.0},
+                               {1.0, 0.45, 1.0},
+                               {2.0, 0.55, 1.0}}};
+
+    const auto decoded = deserializeAgentStates(serializeAgentStates({vehicle}));
+
+    ASSERT_EQ(decoded.size(), 1u);
+    ASSERT_TRUE(decoded.front().hasWheelPresentation);
+    EXPECT_EQ(decoded.front().wheelPositions, vehicle.wheelPositions);
+}
+
 TEST(SerializerTest, EmptyAgentList) {
     auto msg = serializeAgentStates({});
     auto decoded = deserializeAgentStates(msg);

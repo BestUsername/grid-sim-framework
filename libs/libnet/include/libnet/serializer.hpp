@@ -14,7 +14,7 @@
 
 namespace grid::net {
 
-inline constexpr uint16_t kProtocolVersion = 2;
+inline constexpr uint16_t kProtocolVersion = 3;
 
 /**
  * @brief Compact agent state snapshot sent over the wire.
@@ -33,6 +33,9 @@ struct AgentSnapshot {
     bool dead = false;
     std::string driverName;  ///< Name of mounted soldier (vehicles only)
     uint64_t ownerEpoch = 0;
+    /// Authoritative presentation-only wheel centers for a land vehicle.
+    bool hasWheelPresentation = false;
+    std::array<std::array<double, 3>, 4> wheelPositions{};
 };
 
 // ── Low-level pack/unpack helpers ───────────────────────────────────────
@@ -163,7 +166,8 @@ private:
  * Wire format per agent:
  *   [string name] [double x] [double y] [double z] [double health]
  *   [double yaw] [uint8 entityType] [uint8 faction] [uint8 dead]
- *   [string driverName]
+ *   [string driverName] [uint64 ownerEpoch] [uint8 hasWheelPresentation]
+ *   [[double wheelX] [double wheelY] [double wheelZ]] * 4 when present
  * Prefixed with a uint16_t agent count.
  */
 inline Message serializeAgentStates(const std::vector<AgentSnapshot>& agents) {
@@ -186,6 +190,14 @@ inline Message serializeAgentStates(const std::vector<AgentSnapshot>& agents) {
         detail::packUint8(buf, a.dead ? 1 : 0);
         detail::packString(buf, a.driverName);
         detail::packUint64(buf, a.ownerEpoch);
+        detail::packUint8(buf, a.hasWheelPresentation ? 1 : 0);
+        if (a.hasWheelPresentation) {
+            for (const auto& wheel : a.wheelPositions) {
+                detail::packDouble(buf, wheel[0]);
+                detail::packDouble(buf, wheel[1]);
+                detail::packDouble(buf, wheel[2]);
+            }
+        }
     }
     return Message(MessageType::AgentState, std::move(buf));
 }
@@ -206,6 +218,14 @@ inline std::vector<AgentSnapshot> deserializeAgentStates(const Message& msg) {
         agents[i].dead = reader.readUint8() != 0;
         agents[i].driverName = reader.readString();
         agents[i].ownerEpoch = reader.readUint64();
+        agents[i].hasWheelPresentation = reader.readUint8() != 0;
+        if (agents[i].hasWheelPresentation) {
+            for (auto& wheel : agents[i].wheelPositions) {
+                wheel[0] = reader.readDouble();
+                wheel[1] = reader.readDouble();
+                wheel[2] = reader.readDouble();
+            }
+        }
     }
     if (!reader.empty()) {
         throw std::invalid_argument("agent state payload contains trailing data");

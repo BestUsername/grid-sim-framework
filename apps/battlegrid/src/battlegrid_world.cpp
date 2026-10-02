@@ -533,7 +533,8 @@ bool BattleGridWorld::applyCollisionCorrection(
 }
 
 void BattleGridWorld::updateFromSnapshots(
-    const std::vector<grid::net::AgentSnapshot>& snapshots)
+    const std::vector<grid::net::AgentSnapshot>& snapshots,
+    std::unordered_map<std::string, COORD>* presentationPositions)
 {
     const auto syncRemoteBody = [&](const auto& actor, const grid::net::AgentSnapshot& snap,
                                     double rootOffset = 0.0) {
@@ -591,7 +592,22 @@ void BattleGridWorld::updateFromSnapshots(
             return false;
         };
         if (updateVehicle(
-                m_landVehicles, LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight)) continue;
+                m_landVehicles, LandVehicle::kChassisCenterHeight - LandVehicle::kChassisHalfHeight)) {
+            if (presentationPositions && snap.hasWheelPresentation) {
+                for (const auto& vehicle : m_landVehicles) {
+                    if (vehicle->name() != snap.name) {
+                        continue;
+                    }
+                    for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
+                        const auto& wheel = snap.wheelPositions[index];
+                        (*presentationPositions)[vehicle->wheelName(index)] = {
+                            wheel[0], wheel[1], wheel[2]};
+                    }
+                    break;
+                }
+            }
+            continue;
+        }
         if (updateVehicle(m_seaVehicles)) continue;
         if (updateVehicle(m_airVehicles)) continue;
 

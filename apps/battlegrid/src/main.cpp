@@ -201,6 +201,17 @@ static std::vector<grid::net::AgentSnapshot> snapshotAllAgents(
             snap.dead       = v->isDead();
             if (v->hasDriver())
                 snap.driverName = v->driver()->name();
+            if (const auto* landVehicle = dynamic_cast<battlegrid::LandVehicle*>(v)) {
+                for (std::size_t index = 0; index < battlegrid::LandVehicle::kWheelCount; ++index) {
+                    const auto wheel = positions.find(landVehicle->wheelName(index));
+                    if (wheel == positions.end()) {
+                        break;
+                    }
+                    snap.wheelPositions[index] = {
+                        wheel->second[0], wheel->second[1], wheel->second[2]};
+                    snap.hasWheelPresentation = index + 1 == battlegrid::LandVehicle::kWheelCount;
+                }
+            }
         } else if (auto* c = dynamic_cast<battlegrid::Civilian*>(a.get())) {
             snap.health     = c->health();
             snap.entityType = static_cast<uint8_t>(battlegrid::EntityType::Civilian);
@@ -848,7 +859,7 @@ int main(int argc, char** argv)
             {
                 std::lock_guard<std::mutex> lk(clientSnapshotMtx);
                 world.engine().withAgentsLock([&] {
-                    world.updateFromSnapshots(clientSnapshots);
+                    world.updateFromSnapshots(clientSnapshots, &positions);
                     for (auto& s : clientSnapshots) {
                         positions[s.name] = COORD{s.position[0], s.position[1], s.position[2]};
                     }

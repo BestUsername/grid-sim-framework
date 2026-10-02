@@ -32,8 +32,10 @@ state atomically under the engine lock.
 - Keep each land vehicle's chassis and four wheel bodies on the same owner. Wheels and suspension
   are local implementation detail; replicate the chassis state and controls, not independent wheel
   authority.
-- BattleGrid adds wheel positions to its local presentation snapshot solely for rendering round
-  tires. Those wheel-name entries are not a network protocol.
+- BattleGrid transmits authoritative land-vehicle wheel centers as an optional presentation payload
+  alongside its chassis snapshot. Clients render those transforms but never create distributed wheel
+  authority or step remote suspension; the owning server remains the only Box3D solver for all five
+  bodies.
 - The solver uses a fixed timestep, but do not assume bit-for-bit determinism across platforms or
   Box3D versions. Prefer authoritative snapshots and correction over lockstep simulation until
   cross-platform determinism is demonstrated.

@@ -85,7 +85,10 @@ public:
 
     /// Update local agents from server snapshots (client-side sync).
     /// Creates missing agents and updates yaw/health/dead on existing ones.
-    void updateFromSnapshots(const std::vector<grid::net::AgentSnapshot>& snapshots);
+    /// When presentationPositions is supplied, applies authoritative land-vehicle
+    /// wheel centers for rendering without simulating wheels locally.
+    void updateFromSnapshots(const std::vector<grid::net::AgentSnapshot>& snapshots,
+                             std::unordered_map<std::string, COORD>* presentationPositions = nullptr);
 
     /// Mark an agent as remote-owned by name.  Returns true if found.
     bool setAgentRemoteOwned(const std::string& name, bool owned);

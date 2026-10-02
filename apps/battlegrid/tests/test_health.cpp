@@ -589,11 +589,23 @@ TEST(BattleGridPhysicsTest, VehicleSnapshotsUpdateRenderedYaw)
     snapshot.position = {4.0, 0.0, 5.0};
     snapshot.yaw = 1.25;
     snapshot.entityType = static_cast<uint8_t>(EntityType::LandVehicle);
-    world.updateFromSnapshots({snapshot});
+    snapshot.hasWheelPresentation = true;
+    snapshot.wheelPositions = {{{3.2, 0.30, 5.7},
+                                {4.8, 0.45, 5.7},
+                                {3.2, 0.25, 4.3},
+                                {4.8, 0.40, 4.3}}};
+    std::unordered_map<std::string, COORD> positions;
+    world.updateFromSnapshots({snapshot}, &positions);
 
     EXPECT_EQ(vehicle->location(), (COORD{4.0, 0.0, 5.0}));
     EXPECT_DOUBLE_EQ(vehicle->yaw(), snapshot.yaw);
     EXPECT_DOUBLE_EQ(vehicle->desiredYaw(), snapshot.yaw);
+    for (std::size_t index = 0; index < LandVehicle::kWheelCount; ++index) {
+        const auto& position = positions.at(vehicle->wheelName(index));
+        EXPECT_DOUBLE_EQ(position[0], snapshot.wheelPositions[index][0]);
+        EXPECT_DOUBLE_EQ(position[1], snapshot.wheelPositions[index][1]);
+        EXPECT_DOUBLE_EQ(position[2], snapshot.wheelPositions[index][2]);
+    }
 }
 
 TEST(BattleGridPhysicsTest, MountedLandVehicleUsesForwardReverseAndSteeringControls)
